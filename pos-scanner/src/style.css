@@ -1,0 +1,54 @@
+:root {
+	color-scheme: dark;
+	--bg: #0b1220;
+	--bg-elevated: #141c2e;
+	--fg: #e8eef9;
+	--muted: #93a0b8;
+	--accent: #5eead4;
+	--accent-dim: rgba(94, 234, 212, 0.16);
+	--warn: #f59e0b;
+	--danger: #fb7185;
+	--ok: #4ade80;
+	--reticle: rgba(94, 234, 212, 0.95);
+	--font: "IBM Plex Sans", "Segoe UI", sans-serif;
+	--mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+	margin: 0;
+	min-height: 100%;
+	height: 100%;
+	background: var(--bg);
+	color: var(--fg);
+	font-family: var(--font);
+}
+
+body {
+	overflow: hidden;
+}
+
+button,
+input {
+	font: inherit;
+}
+
+button {
+	cursor: pointer;
+}
+
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	border: 0;
+}

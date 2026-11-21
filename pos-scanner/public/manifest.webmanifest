@@ -1,0 +1,19 @@
+{
+	"name": "POSNext Mobile Scanner",
+	"short_name": "POS Scanner",
+	"description": "Camera barcode + OCR SKU recognition prototype",
+	"start_url": "/pos-scanner",
+	"scope": "/pos-scanner",
+	"display": "standalone",
+	"background_color": "#0b1220",
+	"theme_color": "#0b1220",
+	"orientation": "portrait",
+	"icons": [
+		{
+			"src": "/icon.svg",
+			"sizes": "any",
+			"type": "image/svg+xml",
+			"purpose": "any"
+		}
+	]
+}
