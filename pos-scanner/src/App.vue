@@ -4,14 +4,19 @@ import ManualEntry from "@/components/ManualEntry.vue";
 import MatchPicker from "@/components/MatchPicker.vue";
 import ResultCard from "@/components/ResultCard.vue";
 import Reticle from "@/components/Reticle.vue";
+import SettingsPanel from "@/components/SettingsPanel.vue";
 import { listMockItems } from "@/lib/mockCatalog.js";
+import { WORK_MODE_LABELS, loadSettings, saveSettings } from "@/lib/settings.js";
+import { isAndroidDemoShell, readNativeServerConfig } from "@/lib/shellBridge.js";
 import { useCamera } from "@/composables/useCamera.js";
 import { useScanner } from "@/composables/useScanner.js";
 
 const videoRef = ref(null);
 const showManual = ref(false);
 const showHelp = ref(false);
+const showSettings = ref(false);
 const started = ref(false);
+const settings = ref(loadSettings());
 
 const camera = useCamera();
 const scanner = useScanner(camera);
@@ -23,15 +28,44 @@ const sheetOpen = computed(
 		Boolean(scanner.result.value)
 );
 
+const modeLabel = computed(
+	() => WORK_MODE_LABELS[settings.value.workMode] || WORK_MODE_LABELS.immediate
+);
+
+const needsServerHint = computed(() => !settings.value.serverUrl);
+
 onMounted(async () => {
+	syncFromNativeShell();
 	await scanner.warmEngines();
+	// First launch convenience: open settings if no server URL yet (e.g. blank APK host)
+	if (!settings.value.serverUrl || settings.value.serverUrl.includes("example.com")) {
+		if (isAndroidDemoShell()) showSettings.value = true;
+	}
 });
+
+function syncFromNativeShell() {
+	const native = readNativeServerConfig();
+	if (!native?.serverUrl) return;
+	const next = saveSettings({
+		...settings.value,
+		serverUrl: native.serverUrl,
+		scannerPath: native.scannerPath || settings.value.scannerPath,
+	});
+	settings.value = next;
+}
+
+function onSettingsSaved(next) {
+	settings.value = next;
+}
 
 async function begin() {
 	await nextTick();
 	await camera.start(videoRef.value);
 	if (camera.ready.value) {
 		started.value = true;
+		if (settings.value.torchDefault) {
+			await camera.setTorch(true);
+		}
 		await scanner.startLoop();
 	}
 }
@@ -47,6 +81,18 @@ function closeManual() {
 		scanner.resumeScanning();
 	}
 }
+
+function openSettings() {
+	scanner.paused.value = true;
+	showSettings.value = true;
+}
+
+function closeSettings() {
+	showSettings.value = false;
+	if (!scanner.result.value && !scanner.pendingChoice.value && !showManual.value) {
+		scanner.paused.value = false;
+	}
+}
 </script>
 
 <template>
@@ -54,7 +100,7 @@ function closeManual() {
 		<header class="top">
 			<div>
 				<p class="brand">POSNext Scanner</p>
-				<p class="sub">Recognition prototype · демо без кассы</p>
+				<p class="sub">{{ modeLabel }} · демо без кассы</p>
 			</div>
 			<div class="top__actions">
 				<button
@@ -66,6 +112,9 @@ function closeManual() {
 					@click="camera.toggleTorch()"
 				>
 					{{ camera.torchOn.value ? "Torch on" : "Torch" }}
+				</button>
+				<button type="button" class="icon-btn" title="Настройки" @click="openSettings">
+					Настр.
 				</button>
 				<button type="button" class="icon-btn" title="Справка" @click="showHelp = !showHelp">
 					?
@@ -89,9 +138,25 @@ function closeManual() {
 					Прототип для A03–A05: zxing-wasm (1D/2D) и tesseract.js (SKU##### в
 					прицеле). Поиск товаров — mock-каталог.
 				</p>
-				<button type="button" class="cta" :disabled="scanner.status.value === 'loading'" @click="begin">
-					{{ scanner.status.value === "loading" ? "Загрузка движков…" : "Открыть камеру" }}
-				</button>
+				<p v-if="settings.serverUrl" class="gate-meta mono">
+					{{ settings.serverUrl }}{{ settings.scannerPath }}
+				</p>
+				<p v-if="needsServerHint" class="warn">
+					Сначала укажите URL сервера в настройках.
+				</p>
+				<div class="gate-actions">
+					<button
+						type="button"
+						class="cta"
+						:disabled="scanner.status.value === 'loading'"
+						@click="begin"
+					>
+						{{ scanner.status.value === "loading" ? "Загрузка движков…" : "Открыть камеру" }}
+					</button>
+					<button type="button" class="cta secondary" @click="openSettings">
+						Настройки
+					</button>
+				</div>
 				<p v-if="camera.error.value" class="err">{{ camera.error.value }}</p>
 				<p v-if="scanner.lastError.value" class="err">{{ scanner.lastError.value }}</p>
 			</div>
@@ -99,10 +164,12 @@ function closeManual() {
 			<div v-else-if="camera.error.value" class="gate">
 				<p class="err">{{ camera.error.value }}</p>
 				<button type="button" class="cta" @click="openManual">Ручной ввод</button>
+				<button type="button" class="cta secondary" @click="openSettings">Настройки</button>
 			</div>
 
 			<div class="hud" v-if="started && camera.ready.value">
 				<span>{{ scanner.status.value }}</span>
+				<span>{{ modeLabel }}</span>
 				<span v-if="scanner.lastDecodeMs.value">{{ scanner.lastDecodeMs.value }} ms</span>
 				<span v-if="scanner.engineInfo.value">
 					{{ scanner.engineInfo.value.native ? "native+zxing" : "zxing" }}
@@ -112,6 +179,7 @@ function closeManual() {
 
 		<footer class="bar" v-if="started">
 			<button type="button" class="bar__btn" @click="openManual">Ручной ввод</button>
+			<button type="button" class="bar__btn" @click="openSettings">Настройки</button>
 			<button
 				type="button"
 				class="bar__btn"
@@ -147,6 +215,17 @@ function closeManual() {
 				@dismiss="scanner.dismiss"
 			/>
 		</div>
+
+		<SettingsPanel
+			:model-value="showSettings"
+			@update:model-value="
+				(v) => {
+					showSettings = v;
+					if (!v) closeSettings();
+				}
+			"
+			@saved="onSettingsSaved"
+		/>
 
 		<aside v-if="showHelp" class="help" @click.self="showHelp = false">
 			<div class="help__panel">
@@ -257,6 +336,18 @@ function closeManual() {
 	line-height: 1.45;
 }
 
+.gate-meta {
+	font-size: 0.8rem;
+	color: var(--accent);
+	word-break: break-all;
+}
+
+.gate-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+}
+
 .cta {
 	justify-self: start;
 	border: 0;
@@ -267,12 +358,22 @@ function closeManual() {
 	font-weight: 700;
 }
 
+.cta.secondary {
+	background: transparent;
+	color: var(--fg);
+	border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
 .cta:disabled {
 	opacity: 0.6;
 }
 
 .err {
 	color: var(--danger);
+}
+
+.warn {
+	color: var(--warn);
 }
 
 .hud {

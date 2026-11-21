@@ -84,6 +84,10 @@ keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -sto
 - Demo WebView: grants `PermissionRequest.RESOURCE_VIDEO_CAPTURE` after runtime permission
 - TWA: Chrome handles getUserMedia; site must be HTTPS
 
+## In-app server URL (demo)
+
+Demo APK persists `server_url` / `scanner_path` in SharedPreferences. First launch with placeholder host opens `assets/bootstrap/`. The PWA settings screen can call `PosNextShell.applyServerConfig` to reload. **TWA still needs a rebuild** for a new production host + Digital Asset Links.
+
 ## iOS
 
 Out of scope (no App Store wrapper in this PR).

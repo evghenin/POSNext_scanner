@@ -1,7 +1,9 @@
 /**
  * Distinct feedback hooks for recognized / error / added.
- * Sound + vibration stubs — replace with real assets in production PWA.
+ * Sound + vibration respect scanner settings when provided.
  */
+
+import { loadSettings } from "./settings.js";
 
 const PATTERNS = {
 	recognized: { vibe: [18], freq: 880, ms: 60 },
@@ -46,9 +48,11 @@ function vibe(pattern) {
 
 /**
  * @param {"recognized" | "added" | "error"} kind
+ * @param {{ soundEnabled?: boolean, vibrateEnabled?: boolean }} [opts]
  */
-export function feedback(kind) {
+export function feedback(kind, opts) {
+	const settings = opts || loadSettings();
 	const cfg = PATTERNS[kind] || PATTERNS.recognized;
-	vibe(cfg.vibe);
-	beep(cfg.freq, cfg.ms);
+	if (settings.vibrateEnabled !== false) vibe(cfg.vibe);
+	if (settings.soundEnabled !== false) beep(cfg.freq, cfg.ms);
 }
