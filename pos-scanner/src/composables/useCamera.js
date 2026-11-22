@@ -1,5 +1,32 @@
 import { onBeforeUnmount, ref, shallowRef } from "vue";
 
+/** 1×1 black SVG — suppresses Android WebView empty-video placeholder icon. */
+export const CAMERA_BLACK_POSTER =
+	"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'%3E%3Crect width='1' height='1' fill='%23000'/%3E%3C/svg%3E";
+
+/**
+ * Wait until the video element has a paintable frame (or timeout).
+ * @param {HTMLVideoElement} video
+ * @param {number} [ms]
+ */
+function waitForVideoFrame(video, ms = 2500) {
+	if (video.readyState >= 2 && video.videoWidth > 0) return Promise.resolve();
+	return new Promise((resolve) => {
+		let done = false;
+		const finish = () => {
+			if (done) return;
+			done = true;
+			video.removeEventListener("loadeddata", finish);
+			video.removeEventListener("playing", finish);
+			clearTimeout(timer);
+			resolve();
+		};
+		const timer = setTimeout(finish, ms);
+		video.addEventListener("loadeddata", finish);
+		video.addEventListener("playing", finish);
+	});
+}
+
 /**
  * getUserMedia camera with torch/flashlight when the track supports it.
  */
@@ -37,7 +64,12 @@ export function useCamera() {
 			});
 			stream.value = media;
 			videoEl.value.srcObject = media;
-			await videoEl.value.play();
+			try {
+				await videoEl.value.play();
+			} catch {
+				/* autoplay may reject briefly; loadeddata still arrives */
+			}
+			await waitForVideoFrame(videoEl.value);
 			ready.value = true;
 			await refreshTorchCapability();
 		} catch (e) {

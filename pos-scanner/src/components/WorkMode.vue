@@ -5,7 +5,7 @@ import ItemAddCard from "@/components/ItemAddCard.vue";
 import ManualKeypad from "@/components/ManualKeypad.vue";
 import MatchPicker from "@/components/MatchPicker.vue";
 import Reticle from "@/components/Reticle.vue";
-import { useCamera } from "@/composables/useCamera.js";
+import { CAMERA_BLACK_POSTER, useCamera } from "@/composables/useCamera.js";
 import { useScanner } from "@/composables/useScanner.js";
 import {
 	addToCart,
@@ -183,7 +183,15 @@ async function onDisconnect() {
 	<section class="work" :class="{ 'work--manual': manualMode }">
 		<div class="scanner">
 			<template v-if="!manualMode">
-				<video ref="videoRef" class="preview" playsinline muted autoplay />
+				<video
+					ref="videoRef"
+					class="preview"
+					:class="{ 'preview--live': camera.ready.value }"
+					playsinline
+					muted
+					autoplay
+					:poster="CAMERA_BLACK_POSTER"
+				/>
 				<Reticle v-if="camera.ready.value" />
 				<div class="scanner__bar">
 					<button
@@ -276,6 +284,15 @@ async function onDisconnect() {
 	width: 100%;
 	height: 100%;
 	object-fit: cover;
+	background: #000;
+	/* Hide empty <video> chrome (Android WebView broken-file icon) until live. */
+	opacity: 0;
+	visibility: hidden;
+}
+
+.preview--live {
+	opacity: 1;
+	visibility: visible;
 }
 
 .scanner__bar {
