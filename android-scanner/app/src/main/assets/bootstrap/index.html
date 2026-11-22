@@ -54,9 +54,6 @@
 				background: var(--accent);
 				color: #04201b;
 			}
-			button:disabled {
-				opacity: 0.65;
-			}
 			.err {
 				color: var(--danger);
 			}
@@ -76,8 +73,8 @@
 		<h1>POSNext Scanner</h1>
 		<p>
 			Интерфейс сканера, OCR и WASM уже внутри APK. Укажите HTTPS-сайт ERPNext/POSNext
-			<strong>только для API</strong> (pairing / корзина). Маршрут
-			<code>/pos-scanner</code> на сервере не требуется.
+			<strong>только для API</strong> (pairing / корзина). Хостинг
+			<code>/pos-scanner</code> на сервере не нужен — UI не загружается с сайта.
 		</p>
 		<label>
 			URL сервера API
@@ -105,19 +102,6 @@
 				var o = normalizeOrigin(document.getElementById("serverUrl").value);
 				document.getElementById("preview").textContent = o ? "API: " + o : "";
 			}
-			function setBusy(busy, msg) {
-				var btn = document.getElementById("go");
-				var status = document.getElementById("status");
-				btn.disabled = !!busy;
-				btn.textContent = busy ? "Проверка API…" : "Сохранить и открыть сканер";
-				if (msg) {
-					status.hidden = false;
-					status.textContent = msg;
-				} else if (!busy) {
-					status.hidden = true;
-					status.textContent = "";
-				}
-			}
 			document.getElementById("serverUrl").addEventListener("input", refreshPreview);
 			try {
 				if (window.PosNextShell && window.PosNextShell.getServerConfigJson) {
@@ -128,6 +112,7 @@
 			refreshPreview();
 			document.getElementById("go").addEventListener("click", function () {
 				var err = document.getElementById("error");
+				var status = document.getElementById("status");
 				err.hidden = true;
 				var origin = normalizeOrigin(document.getElementById("serverUrl").value);
 				if (!origin) {
@@ -136,26 +121,19 @@
 					return;
 				}
 				if (!(window.PosNextShell && window.PosNextShell.applyServerConfig)) {
-					err.textContent =
-						"Мост приложения недоступен. Переустановите APK.";
+					err.textContent = "Мост приложения недоступен. Переустановите APK.";
 					err.hidden = false;
 					return;
 				}
-				setBusy(true, "Сохраняем " + origin + "…");
+				status.hidden = false;
+				status.textContent = "Сохраняем API URL…";
 				try {
-					window.PosNextShell.applyServerConfig(origin, "/pos-scanner");
-					setTimeout(function () {
-						if (document.getElementById("go").disabled) {
-							err.textContent =
-								"Нет ответа от приложения. Нажмите ещё раз или переустановите APK.";
-							err.hidden = false;
-							setBusy(false);
-						}
-					}, 20000);
+					// Empty path: offline shell ignores PWA path entirely.
+					window.PosNextShell.applyServerConfig(origin, "");
 				} catch (e) {
 					err.textContent = "Ошибка: " + (e && e.message ? e.message : e);
 					err.hidden = false;
-					setBusy(false);
+					status.hidden = true;
 				}
 			});
 		</script>

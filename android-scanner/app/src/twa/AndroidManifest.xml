@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 	<application>
-		<!-- Production shell: Chrome Trusted Web Activity for /pos-scanner -->
+		<!-- Optional hosted PWA shell. Demo offline APK is preferred; TWA still needs a published PWA. -->
 		<activity
 			android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
 			android:exported="true"

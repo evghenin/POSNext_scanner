@@ -34,7 +34,7 @@ export function readNativeServerConfig() {
 		const parsed = JSON.parse(raw || "{}");
 		return {
 			serverUrl: String(parsed.serverUrl || ""),
-			scannerPath: String(parsed.scannerPath || "/pos-scanner"),
+			scannerPath: String(parsed.scannerPath || ""),
 			offlineBundle: Boolean(parsed.offlineBundle),
 		};
 	} catch {
@@ -43,16 +43,17 @@ export function readNativeServerConfig() {
 }
 
 /**
- * Persist API host in the APK. Offline shell keeps the local UI loaded.
+ * Persist API host in the APK. Offline shell keeps the local UI loaded
+ * and must not navigate to a remote /pos-scanner page.
  * @param {string} serverUrl
- * @param {string} scannerPath
+ * @param {string} [scannerPath] ignored by offline bundle (API origin only)
  * @returns {boolean} true if the native shell accepted the request
  */
-export function applyNativeServerConfig(serverUrl, scannerPath) {
+export function applyNativeServerConfig(serverUrl, scannerPath = "") {
 	const bridge = native();
 	if (!bridge?.applyServerConfig) return false;
 	try {
-		bridge.applyServerConfig(serverUrl, scannerPath);
+		bridge.applyServerConfig(serverUrl, scannerPath || "");
 		return true;
 	} catch (e) {
 		console.warn("[shellBridge] applyServerConfig failed", e);

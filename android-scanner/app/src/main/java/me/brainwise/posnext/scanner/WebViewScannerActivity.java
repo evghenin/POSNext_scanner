@@ -35,8 +35,6 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.webkit.WebViewAssetLoader;
 
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -47,12 +45,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>Server URL in settings is for Frappe/POSNext <strong>API only</strong> —
  * the UI, OCR tessdata, tesseract workers, and zxing WASM are bundled offline.
+ * The shell never navigates to a remote {@code /pos-scanner} page.
  */
 public class WebViewScannerActivity extends AppCompatActivity implements ShellBridge.Host {
 	private static final String TAG = "POSNextScanner";
 	private static final String PREFS = "posnext_scanner_shell";
 	private static final String KEY_SERVER_URL = "server_url";
-	private static final String KEY_SCANNER_PATH = "scanner_path";
 	private static final String KEY_CACHE_BUST = "asset_cache_bust";
 
 	/** Virtual HTTPS origin served from android_asset/www/ (same-origin for workers). */
@@ -61,15 +59,12 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 			"https://" + ASSET_DOMAIN + "/www/index.html";
 
 	private static final String BOOTSTRAP_URL = "file:///android_asset/bootstrap/index.html";
-	private static final String ERROR_URL = "file:///android_asset/error/index.html";
-	private static final String LOADING_URL = "file:///android_asset/loading/index.html";
 
 	private final Handler mainHandler = new Handler(Looper.getMainLooper());
 	private WebView webView;
 	private WebViewAssetLoader assetLoader;
 	private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
 	private final AtomicInteger probeGeneration = new AtomicInteger(0);
-	private volatile boolean suppressNextHttpError = false;
 
 	@Nullable private PermissionRequest pendingWebPermission;
 	private final ActivityResultLauncher<String> cameraPermissionLauncher =
@@ -161,25 +156,28 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 					@Override
 					public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
 						Uri uri = request.getUrl();
+						// Never leave the bundled UI for a remote /pos-scanner (or any remote page).
+						if (isRemoteUiNavigation(uri)) {
+							Log.i(TAG, "Blocked remote UI navigation: " + uri);
+							openBundledScanner();
+							return true;
+						}
 						return !isAllowedUrl(uri);
 					}
 
 					@Override
 					public void onReceivedHttpError(
 							WebView view, WebResourceRequest request, WebResourceResponse errorResponse) {
-						if (!request.isForMainFrame() || suppressNextHttpError) {
+						if (!request.isForMainFrame()) {
 							return;
 						}
 						String url = request.getUrl() != null ? request.getUrl().toString() : "";
 						if (isLocalAsset(url) || isBundledScannerUrl(url)) {
 							return;
 						}
-						int code = errorResponse != null ? errorResponse.getStatusCode() : 0;
-						String kind = code == 404 || code == 410 ? "not_found" : "server_error";
-						if (code >= 500) {
-							kind = "server_error";
-						}
-						showConnectionError(kind, url, code);
+						// Remote main-frame errors should not hijack the offline UI.
+						Log.w(TAG, "Ignoring remote HTTP error on " + url);
+						openBundledScanner();
 					}
 
 					@Override
@@ -192,20 +190,8 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 						if (isLocalAsset(url) || isBundledScannerUrl(url)) {
 							return;
 						}
-						String kind = "unknown";
-						if (error != null) {
-							int code = error.getErrorCode();
-							if (code == ERROR_HOST_LOOKUP) {
-								kind = "dns";
-							} else if (code == ERROR_TIMEOUT) {
-								kind = "timeout";
-							} else if (code == ERROR_FAILED_SSL_HANDSHAKE) {
-								kind = "tls";
-							} else if (code == ERROR_CONNECT || code == ERROR_IO) {
-								kind = "unknown";
-							}
-						}
-						showConnectionError(kind, url, null);
+						Log.w(TAG, "Ignoring remote load error on " + url);
+						openBundledScanner();
 					}
 				});
 
@@ -276,7 +262,6 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 
 	private void openBundledScanner() {
 		assertMainThread();
-		suppressNextHttpError = false;
 		ensureAndroidCameraPermission();
 		if (webView != null) {
 			webView.loadUrl(withCacheBust(LOCAL_SCANNER_URL));
@@ -304,11 +289,8 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 	@NonNull
 	@Override
 	public String getScannerPath() {
-		String stored = prefs().getString(KEY_SCANNER_PATH, "");
-		if (stored != null && !stored.isEmpty()) {
-			return stored;
-		}
-		return "/pos-scanner";
+		// Offline APK does not use a hosted PWA path.
+		return "";
 	}
 
 	@Override
@@ -321,19 +303,21 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		runOnMain(
 				() -> {
 					String origin = normalizeOrigin(serverUrl);
-					String path = normalizePath(scannerPath);
+					SharedPreferences.Editor edit = prefs().edit();
 					if (origin.isEmpty()) {
-						prefs().edit().remove(KEY_SERVER_URL).putString(KEY_SCANNER_PATH, path).apply();
-						openBundledScanner();
-						return;
+						edit.remove(KEY_SERVER_URL);
+					} else {
+						edit.putString(KEY_SERVER_URL, origin);
 					}
-					prefs()
-							.edit()
-							.putString(KEY_SERVER_URL, origin)
-							.putString(KEY_SCANNER_PATH, path)
-							.apply();
-					// Soft API probe — UI stays local either way
-					probeApiThenStayLocal(origin);
+					edit.apply();
+					// Never navigate to remote /pos-scanner; keep (or restore) local UI.
+					String current = webView != null ? webView.getUrl() : null;
+					if (!isBundledScannerUrl(current) && !isLocalAsset(current)) {
+						openBundledScanner();
+					}
+					if (!origin.isEmpty()) {
+						softProbeApiInBackground(origin);
+					}
 				});
 	}
 
@@ -341,19 +325,20 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 	public void retryLastServer() {
 		runOnMain(
 				() -> {
+					openBundledScanner();
 					String origin = getServerUrl();
-					if (origin.isEmpty() || origin.contains("example.com")) {
-						openBundledScanner();
-						return;
+					if (!origin.isEmpty() && !origin.contains("example.com")) {
+						softProbeApiInBackground(origin);
 					}
-					probeApiThenStayLocal(origin);
 				});
 	}
 
-	private void probeApiThenStayLocal(@NonNull String origin) {
-		assertMainThread();
+	/**
+	 * Background-only API reachability check. Never shows a loading screen or
+	 * blocks the local scanner UI (pairing/cart will need network later).
+	 */
+	private void softProbeApiInBackground(@NonNull String origin) {
 		final int gen = probeGeneration.incrementAndGet();
-		loadLocal(LOADING_URL);
 		probeExecutor.execute(
 				() -> {
 					ScannerProbe.Result result;
@@ -369,8 +354,6 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 								if (gen != probeGeneration.get()) {
 									return;
 								}
-								// Always return to bundled UI — OCR must not depend on remote assets.
-								openBundledScanner();
 								if (!finalResult.ok) {
 									Toast.makeText(
 													this,
@@ -382,26 +365,6 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 								}
 							});
 				});
-	}
-
-	private void showConnectionError(
-			@NonNull String kind, @Nullable String url, @Nullable Integer status) {
-		assertMainThread();
-		suppressNextHttpError = true;
-		String encodedUrl = "";
-		try {
-			encodedUrl = URLEncoder.encode(url == null ? "" : url, "UTF-8");
-		} catch (UnsupportedEncodingException ignored) {
-			encodedUrl = "";
-		}
-		String target =
-				ERROR_URL
-						+ "?kind="
-						+ Uri.encode(kind)
-						+ "&url="
-						+ encodedUrl
-						+ (status != null ? "&status=" + status : "");
-		loadLocal(target);
 	}
 
 	private void loadLocal(@NonNull String url) {
@@ -465,6 +428,22 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		return url != null && url.contains(ASSET_DOMAIN);
 	}
 
+	/** True for any http(s) main-frame navigation that is not the AssetLoader UI. */
+	private boolean isRemoteUiNavigation(@Nullable Uri uri) {
+		if (uri == null) {
+			return false;
+		}
+		String scheme = uri.getScheme();
+		if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)) {
+			return false;
+		}
+		String host = uri.getHost();
+		if (host == null || host.isEmpty()) {
+			return false;
+		}
+		return !ASSET_DOMAIN.equalsIgnoreCase(host);
+	}
+
 	private boolean isAllowedUrl(@Nullable Uri uri) {
 		if (uri == null) {
 			return false;
@@ -481,10 +460,7 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		if ("https".equalsIgnoreCase(scheme) && ASSET_DOMAIN.equalsIgnoreCase(uri.getHost())) {
 			return true;
 		}
-		// Allow navigating to the configured API host only for completeness; UI stays local.
-		if ("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme)) {
-			return uri.getHost() != null && !uri.getHost().isEmpty();
-		}
+		// Block remote main-frame loads (API traffic uses XHR, not navigation).
 		return false;
 	}
 
@@ -513,15 +489,6 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		} catch (Exception e) {
 			return "";
 		}
-	}
-
-	private static String normalizePath(String raw) {
-		String p = raw == null || raw.trim().isEmpty() ? "/pos-scanner" : raw.trim();
-		if (!p.startsWith("/")) {
-			p = "/" + p;
-		}
-		p = p.replaceAll("/+$", "");
-		return p.isEmpty() ? "/pos-scanner" : p;
 	}
 
 	private void handleWebPermissionRequest(PermissionRequest request) {

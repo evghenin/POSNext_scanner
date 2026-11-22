@@ -54,7 +54,9 @@ function onSave() {
 	emit("saved", next);
 
 	if (inApk || offlineUi) {
-		const applied = applyNativeServerConfig(next.serverUrl, next.scannerPath);
+		// Offline APK: persist API origin only — never a /pos-scanner path.
+		const path = offlineUi ? "" : next.scannerPath;
+		const applied = applyNativeServerConfig(next.serverUrl, path);
 		if (applied) {
 			savedMsg.value = offlineUi
 				? "Сохранено — URL только для API; интерфейс остаётся в приложении."
