@@ -30,8 +30,8 @@ android {
 		applicationId = "me.brainwise.posnext.scanner"
 		minSdk = 26
 		targetSdk = 35
-		versionCode = 15
-		versionName = "0.3.6"
+		versionCode = 16
+		versionName = "0.3.7"
 		buildConfigField("String", "SCANNER_URL", "\"$scannerUrl\"")
 		buildConfigField("String", "SCANNER_ORIGIN", "\"$scannerOrigin\"")
 		manifestPlaceholders["scannerUrl"] = scannerUrl

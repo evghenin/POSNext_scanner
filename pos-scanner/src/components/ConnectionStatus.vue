@@ -24,7 +24,7 @@ const statusLine = computed(() => {
 <template>
 	<section class="gate" aria-live="polite">
 		<p class="brand">{{ t("appName") }}</p>
-		<h1>{{ title }}</h1>
+		<h1 :data-phase="phase">{{ title }}</h1>
 		<p v-if="statusLine" class="status" :data-phase="phase">{{ statusLine }}</p>
 		<div v-if="phase === 'connected'" class="actions">
 			<button type="button" class="primary" @click="$emit('connect')">
@@ -56,6 +56,10 @@ const statusLine = computed(() => {
 h1 {
 	margin: 0;
 	font-size: 1.45rem;
+}
+
+h1[data-phase="connected"] {
+	color: var(--ok);
 }
 
 .status {
