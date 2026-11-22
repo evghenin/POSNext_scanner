@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import CartPanel from "@/components/CartPanel.vue";
 import ItemAddCard from "@/components/ItemAddCard.vue";
+import ManualKeypad from "@/components/ManualKeypad.vue";
 import MatchPicker from "@/components/MatchPicker.vue";
 import Reticle from "@/components/Reticle.vue";
 import { useCamera } from "@/composables/useCamera.js";
@@ -16,7 +17,7 @@ import { sendCartToTill } from "@/lib/cartSend.js";
 import { feedback } from "@/lib/feedback.js";
 import { t } from "@/lib/i18n.js";
 
-const props = defineProps({
+defineProps({
 	pairing: { type: Object, default: null },
 });
 const emit = defineEmits(["pair-again", "settings", "exit"]);
@@ -27,8 +28,7 @@ const scanner = useScanner(camera);
 const cart = ref(loadCart());
 const banner = ref("");
 const sending = ref(false);
-const manualStub = ref(false);
-const stripVisible = ref(true);
+const manualMode = ref(false);
 
 const statusHint = computed(() => {
 	if (scanner.lookingUp.value) return t("lookingUp");
@@ -58,8 +58,7 @@ watch(
 );
 
 async function startCameraStrip() {
-	stripVisible.value = true;
-	manualStub.value = false;
+	manualMode.value = false;
 	await nextTick();
 	await camera.start(videoRef.value);
 	if (camera.ready.value) {
@@ -72,7 +71,6 @@ async function startCameraStrip() {
 function teardownCamera() {
 	scanner.stopLoop();
 	camera.stop();
-	stripVisible.value = false;
 }
 
 async function onCapture() {
@@ -80,15 +78,22 @@ async function onCapture() {
 	await scanner.captureOcrNow();
 }
 
-function onManualStub() {
-	manualStub.value = true;
+function openManual() {
+	banner.value = "";
+	scanner.dismiss();
 	teardownCamera();
-	banner.value = t("manualStub");
+	manualMode.value = true;
 }
 
 async function backFromManual() {
 	banner.value = "";
+	scanner.dismiss();
 	await startCameraStrip();
+}
+
+async function onManualSelect({ code }) {
+	banner.value = "";
+	await scanner.submitManual(code);
 }
 
 function onAdd(opts) {
@@ -153,9 +158,9 @@ async function toggleTorch() {
 </script>
 
 <template>
-	<section class="work">
-		<div class="scanner" :class="{ 'scanner--hidden': manualStub }">
-			<template v-if="!manualStub">
+	<section class="work" :class="{ 'work--manual': manualMode }">
+		<div class="scanner">
+			<template v-if="!manualMode">
 				<video ref="videoRef" class="preview" playsinline muted autoplay />
 				<Reticle v-if="camera.ready.value" />
 				<div class="scanner__bar">
@@ -167,7 +172,7 @@ async function toggleTorch() {
 					>
 						{{ t("capture") }}
 					</button>
-					<button type="button" class="manual" @click="onManualStub">{{ t("manual") }}</button>
+					<button type="button" class="manual" @click="openManual">{{ t("manual") }}</button>
 					<button
 						v-if="camera.torchSupported.value"
 						type="button"
@@ -180,10 +185,7 @@ async function toggleTorch() {
 				</div>
 				<p class="hud">{{ statusHint }}</p>
 			</template>
-			<div v-else class="manual-stub">
-				<p>{{ t("manualStub") }}</p>
-				<button type="button" class="primary" @click="backFromManual">{{ t("backToCamera") }}</button>
-			</div>
+			<ManualKeypad v-else @select="onManualSelect" @close="backFromManual" />
 		</div>
 
 		<div class="ops">
@@ -228,6 +230,10 @@ async function toggleTorch() {
 	display: grid;
 	grid-template-rows: minmax(32%, 38%) 1fr auto;
 	min-height: 0;
+}
+
+.work--manual {
+	grid-template-rows: minmax(52%, 58%) 1fr auto;
 }
 
 .scanner {
@@ -292,25 +298,6 @@ async function toggleTorch() {
 	font-size: 0.72rem;
 	z-index: 2;
 	text-align: center;
-}
-
-.manual-stub {
-	height: 100%;
-	display: grid;
-	align-content: center;
-	gap: 0.75rem;
-	padding: 1rem;
-	background: var(--bg-elevated);
-	color: var(--muted);
-}
-
-.manual-stub .primary {
-	border: 0;
-	border-radius: 12px;
-	padding: 0.75rem;
-	background: var(--accent);
-	color: var(--accent-fg);
-	font-weight: 650;
 }
 
 .ops {
