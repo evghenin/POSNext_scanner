@@ -29,7 +29,6 @@ const labels = computed(() => {
 		close: t("close"),
 		save: t("save"),
 		serverUrl: t("serverUrl"),
-		hint: t("serverUrlHint"),
 		placeholder: t("serverUrlPlaceholder"),
 		language: t("language"),
 		theme: t("theme"),
@@ -102,8 +101,6 @@ function onSave() {
 					{{ labels.close }}
 				</button>
 			</header>
-
-			<p class="hint">{{ labels.hint }}</p>
 
 			<label class="field">
 				<span>{{ labels.serverUrl }}</span>
@@ -184,13 +181,6 @@ function onSave() {
 .settings__head h2 {
 	margin: 0;
 	font-size: 1.15rem;
-}
-
-.hint {
-	margin: 0 0 0.9rem;
-	color: var(--muted);
-	font-size: 0.82rem;
-	line-height: 1.4;
 }
 
 .field {
