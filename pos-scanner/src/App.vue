@@ -21,6 +21,7 @@ const started = ref(false);
 const settings = ref(loadSettings());
 const connectionError = ref(null);
 const probing = ref(false);
+const openingCamera = ref(false);
 
 const camera = useCamera();
 const scanner = useScanner(camera);
@@ -46,7 +47,7 @@ onMounted(async () => {
 		if (isAndroidDemoShell()) showSettings.value = true;
 	} else if (!isAndroidDemoShell()) {
 		// Browser / TWA: soft-check so missing /pos-scanner is explained in our UI
-		await runConnectionProbe({ silentOk: true });
+		await runConnectionProbe();
 	}
 });
 
@@ -65,11 +66,11 @@ async function onSettingsSaved(next) {
 	settings.value = next;
 	connectionError.value = null;
 	if (!isAndroidDemoShell()) {
-		await runConnectionProbe({ silentOk: true });
+		await runConnectionProbe();
 	}
 }
 
-async function runConnectionProbe({ silentOk = false } = {}) {
+async function runConnectionProbe() {
 	if (!settings.value.serverUrl) return true;
 	probing.value = true;
 	try {
@@ -81,25 +82,60 @@ async function runConnectionProbe({ silentOk = false } = {}) {
 			connectionError.value = result;
 			return false;
 		}
-		if (!silentOk) connectionError.value = null;
-		else connectionError.value = null;
+		connectionError.value = null;
 		return true;
+	} catch (e) {
+		connectionError.value = {
+			ok: false,
+			kind: "unknown",
+			title: "Не удалось проверить сервер",
+			description: e?.message || String(e),
+			steps: [
+				"Проверьте URL в настройках",
+				"Проверьте сеть",
+				"Нажмите «Повторить»",
+			],
+			status: null,
+			url: settings.value.serverUrl + settings.value.scannerPath,
+		};
+		return false;
 	} finally {
 		probing.value = false;
 	}
 }
 
 async function begin() {
-	const ok = await runConnectionProbe();
-	if (!ok) return;
-	await nextTick();
-	await camera.start(videoRef.value);
-	if (camera.ready.value) {
-		started.value = true;
-		if (settings.value.torchDefault) {
-			await camera.setTorch(true);
+	openingCamera.value = true;
+	try {
+		const ok = await runConnectionProbe();
+		if (!ok) return;
+		await nextTick();
+		await camera.start(videoRef.value);
+		if (camera.ready.value) {
+			started.value = true;
+			if (settings.value.torchDefault) {
+				await camera.setTorch(true);
+			}
+			await scanner.startLoop();
+			return;
 		}
-		await scanner.startLoop();
+		// Camera failed — error text is on camera.error; keep gate visible
+	} catch (e) {
+		connectionError.value = {
+			ok: false,
+			kind: "unknown",
+			title: "Не удалось открыть сканер",
+			description: e?.message || String(e),
+			steps: [
+				"Разрешите доступ к камере в системе",
+				"Проверьте HTTPS и URL сервера",
+				"Повторите попытку",
+			],
+			status: null,
+			url: settings.value.serverUrl + settings.value.scannerPath,
+		};
+	} finally {
+		openingCamera.value = false;
 	}
 }
 
@@ -187,19 +223,24 @@ async function retryConnection() {
 					Сначала укажите URL сервера в настройках.
 				</p>
 				<p v-if="probing" class="gate-meta">Проверка сервера…</p>
+				<p v-else-if="openingCamera" class="gate-meta">Открытие камеры…</p>
 				<div class="gate-actions">
 					<button
 						type="button"
 						class="cta"
-						:disabled="scanner.status.value === 'loading' || probing"
+						:disabled="
+							scanner.status.value === 'loading' || probing || openingCamera
+						"
 						@click="begin"
 					>
 						{{
 							probing
 								? "Проверка сервера…"
-								: scanner.status.value === "loading"
-									? "Загрузка движков…"
-									: "Открыть камеру"
+								: openingCamera
+									? "Открытие камеры…"
+									: scanner.status.value === "loading"
+										? "Загрузка движков…"
+										: "Открыть камеру"
 						}}
 					</button>
 					<button type="button" class="cta secondary" @click="openSettings">

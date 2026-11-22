@@ -199,20 +199,32 @@ export async function probeScannerEndpoint(cfg, opts = {}) {
  * @param {string} url
  * @param {number} timeoutMs
  */
+/**
+ * Detect ERPNext/Frappe soft-404 HTML served with HTTP 200.
+ * @param {string} body
+ */
+export function looksLikeFrappeNotFound(body) {
+	if (!body) return false;
+	const lower = body.toLowerCase();
+	const frappe =
+		lower.includes("powered by erpnext") ||
+		lower.includes("powered by frappe") ||
+		lower.includes("frappe");
+	const missing =
+		body.includes("Здесь ничего нет") ||
+		lower.includes("not found") ||
+		lower.includes("page not found") ||
+		lower.includes("не найдено");
+	return missing && (frappe || body.includes("Здесь ничего нет"));
+}
+
 async function probeOne(fetchImpl, url, timeoutMs) {
 	const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
 	const timer = setTimeout(() => ctrl?.abort(), timeoutMs);
 	try {
+		// Prefer GET so we can peek for Frappe soft-404 HTML (HEAD often 405 or empty).
 		let res;
 		try {
-			res = await fetchImpl(url, {
-				method: "HEAD",
-				redirect: "follow",
-				cache: "no-store",
-				signal: ctrl?.signal,
-			});
-		} catch {
-			// Some hosts disallow HEAD
 			res = await fetchImpl(url, {
 				method: "GET",
 				redirect: "follow",
@@ -220,10 +232,32 @@ async function probeOne(fetchImpl, url, timeoutMs) {
 				signal: ctrl?.signal,
 				headers: { Accept: "text/html,application/json,*/*" },
 			});
+		} catch (firstErr) {
+			// Fallback HEAD if GET blocked oddly
+			try {
+				res = await fetchImpl(url, {
+					method: "HEAD",
+					redirect: "follow",
+					cache: "no-store",
+					signal: ctrl?.signal,
+				});
+			} catch {
+				throw firstErr;
+			}
 		}
 
 		const status = res.status;
 		if (status >= 200 && status < 400) {
+			try {
+				if (typeof res.text === "function") {
+					const body = await res.text();
+					if (looksLikeFrappeNotFound(body)) {
+						return { ok: false, kind: /** @type {const} */ ("not_found"), status };
+					}
+				}
+			} catch {
+				/* CORS may block body — treat status alone */
+			}
 			return { ok: true, kind: /** @type {const} */ ("ok"), status };
 		}
 		if (status === 404 || status === 410) {

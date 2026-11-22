@@ -59,9 +59,12 @@ function onSave() {
 	if (inApk && target) {
 		const applied = applyNativeServerConfig(next.serverUrl, next.scannerPath);
 		if (applied) {
-			savedMsg.value = "Сохранено — перезагрузка WebView…";
+			savedMsg.value = "Сохранено — проверка сервера и перезагрузка…";
 			return;
 		}
+		error.value =
+			"Мост приложения не ответил. Закройте настройки и нажмите «Открыть сканер» на стартовом экране, либо переустановите APK.";
+		return;
 	}
 
 	if (originChanged && !inApk) {

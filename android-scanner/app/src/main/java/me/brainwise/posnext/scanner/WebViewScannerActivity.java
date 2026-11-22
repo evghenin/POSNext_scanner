@@ -4,10 +4,12 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
 import android.view.ViewGroup;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -35,13 +37,17 @@ import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Fullscreen WebView shell that loads the POSNext /pos-scanner PWA.
- * Probes the remote scanner URL before navigation and never leaves the user
- * on Frappe's raw 404 HTML ("Здесь ничего нет").
+ * Fullscreen WebView shell for /pos-scanner.
+ *
+ * <p>IMPORTANT: {@link android.webkit.JavascriptInterface} callbacks arrive on a
+ * binder thread — all WebView calls are marshalled to the main looper. Calling
+ * {@code loadUrl} off the UI thread was a silent no-op after «Открыть сканер».
  */
 public class WebViewScannerActivity extends AppCompatActivity implements ShellBridge.Host {
+	private static final String TAG = "POSNextScanner";
 	private static final String PREFS = "posnext_scanner_shell";
 	private static final String KEY_SERVER_URL = "server_url";
 	private static final String KEY_SCANNER_PATH = "scanner_path";
@@ -49,8 +55,10 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 	private static final String ERROR_URL = "file:///android_asset/error/index.html";
 	private static final String LOADING_URL = "file:///android_asset/loading/index.html";
 
+	private final Handler mainHandler = new Handler(Looper.getMainLooper());
 	private WebView webView;
 	private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
+	private final AtomicInteger probeGeneration = new AtomicInteger(0);
 	private volatile boolean suppressNextHttpError = false;
 
 	@Nullable private PermissionRequest pendingWebPermission;
@@ -63,10 +71,14 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 						}
 						PermissionRequest request = pendingWebPermission;
 						pendingWebPermission = null;
-						if (granted) {
-							request.grant(request.getResources());
-						} else {
-							request.deny();
+						try {
+							if (granted) {
+								request.grant(request.getResources());
+							} else {
+								request.deny();
+							}
+						} catch (Exception e) {
+							Log.w(TAG, "Failed to settle web camera permission", e);
 						}
 					});
 
@@ -100,10 +112,12 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		WebSettings settings = webView.getSettings();
 		settings.setJavaScriptEnabled(true);
 		settings.setDomStorageEnabled(true);
+		settings.setDatabaseEnabled(true);
 		settings.setMediaPlaybackRequiresUserGesture(false);
 		settings.setAllowFileAccess(true);
 		settings.setAllowContentAccess(false);
 		settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+		settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
 		settings.setUserAgentString(settings.getUserAgentString() + " POSNextScannerAPK/0.1");
 
 		webView.addJavascriptInterface(new ShellBridge(this), "PosNextShell");
@@ -131,7 +145,6 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 						if (code >= 500) {
 							kind = "server_error";
 						}
-						// Never leave Frappe 404 HTML on screen
 						showConnectionError(kind, url, code);
 					}
 
@@ -152,7 +165,7 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 								kind = "dns";
 							} else if (code == ERROR_TIMEOUT) {
 								kind = "timeout";
-							} else if (code == ERROR_FAILED_SSL_HANDSHAKE || code == ERROR_UNSUPPORTED_SCHEME) {
+							} else if (code == ERROR_FAILED_SSL_HANDSHAKE) {
 								kind = "tls";
 							} else if (code == ERROR_CONNECT || code == ERROR_IO) {
 								kind = "unknown";
@@ -160,18 +173,20 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 						}
 						showConnectionError(kind, url, null);
 					}
-
-					@Override
-					public void onPageStarted(WebView view, String url, Bitmap favicon) {
-						super.onPageStarted(view, url, favicon);
-					}
 				});
 
 		webView.setWebChromeClient(
 				new WebChromeClient() {
 					@Override
 					public void onPermissionRequest(final PermissionRequest request) {
-						runOnUiThread(() -> handleWebPermissionRequest(request));
+						mainHandler.post(() -> handleWebPermissionRequest(request));
+					}
+
+					@Override
+					public void onPermissionRequestCanceled(PermissionRequest request) {
+						if (pendingWebPermission == request) {
+							pendingWebPermission = null;
+						}
 					}
 				});
 
@@ -190,6 +205,8 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 							}
 						});
 
+		// Ask early so the first getUserMedia in the PWA is less likely to race
+		ensureAndroidCameraPermission();
 		startInitialNavigation();
 	}
 
@@ -245,40 +262,64 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 
 	@Override
 	public void applyServerConfig(@NonNull String serverUrl, @NonNull String scannerPath) {
-		String origin = normalizeOrigin(serverUrl);
-		String path = normalizePath(scannerPath);
-		if (origin.isEmpty()) {
-			showConnectionError("invalid_url", serverUrl, null);
-			return;
-		}
-		prefs().edit().putString(KEY_SERVER_URL, origin).putString(KEY_SCANNER_PATH, path).apply();
-		probeAndOpen(origin, path);
+		// JavascriptInterface may call this off the UI thread
+		runOnMain(
+				() -> {
+					String origin = normalizeOrigin(serverUrl);
+					String path = normalizePath(scannerPath);
+					if (origin.isEmpty()) {
+						showConnectionError("invalid_url", serverUrl, null);
+						return;
+					}
+					prefs()
+							.edit()
+							.putString(KEY_SERVER_URL, origin)
+							.putString(KEY_SCANNER_PATH, path)
+							.apply();
+					probeAndOpen(origin, path);
+				});
 	}
 
 	@Override
 	public void retryLastServer() {
-		String origin = getServerUrl();
-		if (origin.isEmpty() || origin.contains("example.com")) {
-			loadLocal(BOOTSTRAP_URL);
-			return;
-		}
-		probeAndOpen(origin, getScannerPath());
+		runOnMain(
+				() -> {
+					String origin = getServerUrl();
+					if (origin.isEmpty() || origin.contains("example.com")) {
+						loadLocal(BOOTSTRAP_URL);
+						return;
+					}
+					probeAndOpen(origin, getScannerPath());
+				});
 	}
 
 	private void probeAndOpen(@NonNull String origin, @NonNull String path) {
+		assertMainThread();
+		final int gen = probeGeneration.incrementAndGet();
 		loadLocal(LOADING_URL);
 		probeExecutor.execute(
 				() -> {
-					ScannerProbe.Result result = ScannerProbe.probe(origin, path);
-					runOnUiThread(
+					ScannerProbe.Result result;
+					try {
+						result = ScannerProbe.probe(origin, path);
+					} catch (Throwable t) {
+						Log.e(TAG, "Probe crashed", t);
+						result = new ScannerProbe.Result(false, "unknown", null, origin + path);
+					}
+					final ScannerProbe.Result finalResult = result;
+					runOnMain(
 							() -> {
-								if (result.ok) {
+								if (gen != probeGeneration.get()) {
+									return; // superseded by a newer tap
+								}
+								if (finalResult.ok) {
 									suppressNextHttpError = false;
+									ensureAndroidCameraPermission();
 									if (webView != null) {
-										webView.loadUrl(result.url);
+										webView.loadUrl(finalResult.url);
 									}
 								} else {
-									showConnectionError(result.kind, result.url, result.status);
+									showConnectionError(finalResult.kind, finalResult.url, finalResult.status);
 								}
 							});
 				});
@@ -286,6 +327,7 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 
 	private void showConnectionError(
 			@NonNull String kind, @Nullable String url, @Nullable Integer status) {
+		assertMainThread();
 		suppressNextHttpError = true;
 		String encodedUrl = "";
 		try {
@@ -304,8 +346,30 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 	}
 
 	private void loadLocal(@NonNull String url) {
+		assertMainThread();
 		if (webView != null) {
 			webView.loadUrl(url);
+		}
+	}
+
+	private void runOnMain(@NonNull Runnable r) {
+		if (Looper.myLooper() == Looper.getMainLooper()) {
+			r.run();
+		} else {
+			mainHandler.post(r);
+		}
+	}
+
+	private void assertMainThread() {
+		if (Looper.myLooper() != Looper.getMainLooper()) {
+			throw new IllegalStateException("WebView ops must run on main thread");
+		}
+	}
+
+	private void ensureAndroidCameraPermission() {
+		if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+				!= PackageManager.PERMISSION_GRANTED) {
+			cameraPermissionLauncher.launch(Manifest.permission.CAMERA);
 		}
 	}
 
@@ -367,9 +431,9 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 	private void handleWebPermissionRequest(PermissionRequest request) {
 		boolean wantsCamera = false;
 		for (String resource : request.getResources()) {
-			if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {
-				wantsCamera = true;
-				break;
+			if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)
+					|| PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {
+				wantsCamera = wantsCamera || PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource);
 			}
 		}
 		if (!wantsCamera) {
@@ -378,7 +442,12 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		}
 		if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
 				== PackageManager.PERMISSION_GRANTED) {
-			request.grant(request.getResources());
+			try {
+				request.grant(new String[] {PermissionRequest.RESOURCE_VIDEO_CAPTURE});
+			} catch (Exception e) {
+				Log.w(TAG, "grant camera web permission failed", e);
+				request.deny();
+			}
 			return;
 		}
 		pendingWebPermission = request;

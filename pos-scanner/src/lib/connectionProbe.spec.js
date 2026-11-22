@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { probeMessage, probeScannerEndpoint } from "./connectionProbe.js";
+import {
+	looksLikeFrappeNotFound,
+	probeMessage,
+	probeScannerEndpoint,
+} from "./connectionProbe.js";
 
 describe("connectionProbe", () => {
 	it("returns invalid_url for empty config", async () => {
@@ -14,11 +18,21 @@ describe("connectionProbe", () => {
 		expect(r.steps.length).toBeGreaterThan(1);
 	});
 
+	it("detects Frappe soft-404 HTML", () => {
+		expect(
+			looksLikeFrappeNotFound(
+				'<html>Powered by ERPNext</html><h1>Здесь ничего нет</h1>'
+			)
+		).toBe(true);
+		expect(looksLikeFrappeNotFound("<html>POSNext Scanner</html>")).toBe(false);
+	});
+
 	it("treats 404 as not_found", async () => {
 		const fetchImpl = async () =>
 			/** @type {any} */ ({
 				status: 404,
 				ok: false,
+				text: async () => "",
 			});
 		const r = await probeScannerEndpoint(
 			{ serverUrl: "https://shop.example", scannerPath: "/pos-scanner" },
@@ -28,11 +42,28 @@ describe("connectionProbe", () => {
 		expect(r.kind).toBe("not_found");
 	});
 
-	it("ok when primary returns 200", async () => {
+	it("treats HTTP 200 soft-404 body as not_found", async () => {
 		const fetchImpl = async () =>
 			/** @type {any} */ ({
 				status: 200,
 				ok: true,
+				text: async () =>
+					"Powered by Frappe · Здесь ничего нет · page not found",
+			});
+		const r = await probeScannerEndpoint(
+			{ serverUrl: "https://shop.example", scannerPath: "/pos-scanner" },
+			{ fetchImpl }
+		);
+		expect(r.ok).toBe(false);
+		expect(r.kind).toBe("not_found");
+	});
+
+	it("ok when primary returns 200 without soft-404", async () => {
+		const fetchImpl = async () =>
+			/** @type {any} */ ({
+				status: 200,
+				ok: true,
+				text: async () => "<html>POSNext Scanner</html>",
 			});
 		const r = await probeScannerEndpoint(
 			{ serverUrl: "https://shop.example", scannerPath: "/pos-scanner" },

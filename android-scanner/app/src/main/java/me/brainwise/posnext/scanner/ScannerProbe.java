@@ -3,23 +3,30 @@ package me.brainwise.posnext.scanner;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
+import java.net.ProtocolException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.security.cert.CertPathValidatorException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLHandshakeException;
 
 /**
  * Native HTTP probe for the configured scanner route. Runs off the UI thread.
+ * Treats Frappe soft-404 HTML ("Здесь ничего нет") as not_found even on HTTP 200.
  */
 public final class ScannerProbe {
-	public static final int TIMEOUT_MS = 12000;
+	public static final int TIMEOUT_MS = 10000;
+	private static final int BODY_PEEK_BYTES = 8192;
 
 	public static final class Result {
 		public final boolean ok;
@@ -93,23 +100,26 @@ public final class ScannerProbe {
 
 	@NonNull
 	private static Result probeOne(@NonNull String url) {
+		// Always GET + body peek: HEAD cannot detect Frappe soft-404 HTML
+		// served with HTTP 200, and many hosts reject HEAD with 405.
+		return request(url, "GET", true);
+	}
+
+	@NonNull
+	private static Result request(@NonNull String url, @NonNull String method, boolean peekBody) {
 		HttpURLConnection conn = null;
 		try {
-			conn = open(url, "HEAD");
+			conn = open(url, method);
 			int code = conn.getResponseCode();
-			return mapStatus(code, url);
-		} catch (Exception headErr) {
-			closeQuietly(conn);
-			conn = null;
-			try {
-				conn = open(url, "GET");
-				int code = conn.getResponseCode();
-				return mapStatus(code, url);
-			} catch (Exception e) {
-				return mapException(e, url);
-			} finally {
-				closeQuietly(conn);
+			if (code >= 200 && code < 400) {
+				if (peekBody && looksLikeFrappeNotFound(peekBody(conn))) {
+					return new Result(false, "not_found", code, url);
+				}
+				return new Result(true, "ok", code, url);
 			}
+			return mapStatus(code, url);
+		} catch (Exception e) {
+			return mapException(e, url);
 		} finally {
 			closeQuietly(conn);
 		}
@@ -120,11 +130,65 @@ public final class ScannerProbe {
 		conn.setInstanceFollowRedirects(true);
 		conn.setConnectTimeout(TIMEOUT_MS);
 		conn.setReadTimeout(TIMEOUT_MS);
-		conn.setRequestMethod(method);
+		try {
+			conn.setRequestMethod(method);
+		} catch (ProtocolException e) {
+			throw e;
+		}
 		conn.setRequestProperty("Accept", "text/html,application/json,*/*");
 		conn.setRequestProperty("User-Agent", "POSNextScannerAPK/0.1");
 		conn.connect();
 		return conn;
+	}
+
+	@NonNull
+	private static String peekBody(@NonNull HttpURLConnection conn) {
+		InputStream in = null;
+		try {
+			in = conn.getErrorStream();
+			if (in == null) {
+				in = conn.getInputStream();
+			}
+			if (in == null) {
+				return "";
+			}
+			ByteArrayOutputStream buf = new ByteArrayOutputStream();
+			byte[] tmp = new byte[1024];
+			int total = 0;
+			int n;
+			while (total < BODY_PEEK_BYTES && (n = in.read(tmp, 0, Math.min(tmp.length, BODY_PEEK_BYTES - total))) > 0) {
+				buf.write(tmp, 0, n);
+				total += n;
+			}
+			return buf.toString(StandardCharsets.UTF_8.name());
+		} catch (Exception e) {
+			return "";
+		} finally {
+			if (in != null) {
+				try {
+					in.close();
+				} catch (IOException ignored) {
+					/* ignore */
+				}
+			}
+		}
+	}
+
+	static boolean looksLikeFrappeNotFound(@NonNull String body) {
+		if (body.isEmpty()) {
+			return false;
+		}
+		String lower = body.toLowerCase(Locale.ROOT);
+		boolean frappe =
+				lower.contains("powered by erpnext")
+						|| lower.contains("powered by frappe")
+						|| lower.contains("frappe");
+		boolean missing =
+				body.contains("Здесь ничего нет")
+						|| lower.contains("not found")
+						|| lower.contains("page not found")
+						|| lower.contains("не найдено");
+		return missing && (frappe || body.contains("Здесь ничего нет"));
 	}
 
 	private static Result mapStatus(int code, String url) {
@@ -133,6 +197,10 @@ public final class ScannerProbe {
 		}
 		if (code == 404 || code == 410) {
 			return new Result(false, "not_found", code, url);
+		}
+		if (code == 405 || code == 501) {
+			// Method not allowed — caller may retry GET
+			return new Result(false, "unknown", code, url);
 		}
 		if (code >= 500) {
 			return new Result(false, "server_error", code, url);
@@ -156,7 +224,7 @@ public final class ScannerProbe {
 			}
 			t = t.getCause();
 		}
-		String msg = String.valueOf(e.getMessage()).toLowerCase();
+		String msg = String.valueOf(e.getMessage()).toLowerCase(Locale.ROOT);
 		if (msg.contains("ssl") || msg.contains("cert")) {
 			return new Result(false, "tls", null, url);
 		}
