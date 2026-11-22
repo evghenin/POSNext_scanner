@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { t } from "@/lib/i18n.js";
 
 const props = defineProps({
@@ -8,18 +8,16 @@ const props = defineProps({
 });
 const emit = defineEmits(["update-qty", "remove", "send"]);
 
-const confirmOpen = ref(false);
-
 const totalLines = computed(() => props.lines.length);
 
-function askSend() {
+function onSend() {
 	if (!props.lines.length || props.sending) return;
-	confirmOpen.value = true;
+	emit("send");
 }
 
-function confirmSend() {
-	confirmOpen.value = false;
-	emit("send");
+function selectQty(ev) {
+	const el = ev?.target;
+	if (el && typeof el.select === "function") el.select();
 }
 </script>
 
@@ -43,8 +41,10 @@ function confirmSend() {
 					type="number"
 					min="0.001"
 					step="any"
+					inputmode="decimal"
 					:value="line.qty"
 					:disabled="sending"
+					@focus="selectQty"
 					@change="emit('update-qty', line.id, Number($event.target.value))"
 				/>
 				<button
@@ -63,18 +63,10 @@ function confirmSend() {
 			type="button"
 			class="send"
 			:disabled="!lines.length || sending"
-			@click="askSend"
+			@click="onSend"
 		>
 			{{ sending ? t("sendingCart") : t("sendCart") }}
 		</button>
-
-		<div v-if="confirmOpen" class="confirm" role="dialog" aria-modal="true">
-			<p>{{ t("confirmSendCart") }}</p>
-			<div class="confirm__actions">
-				<button type="button" class="primary" @click="confirmSend">{{ t("sendCart") }}</button>
-				<button type="button" class="ghost" @click="confirmOpen = false">{{ t("cancel") }}</button>
-			</div>
-		</div>
 	</div>
 </template>
 
@@ -124,10 +116,10 @@ h3 {
 
 .line {
 	display: grid;
-	grid-template-columns: 1fr 4.2rem 2.2rem;
-	gap: 0.35rem;
+	grid-template-columns: 1fr 5.2rem 2.2rem;
+	gap: 0.4rem;
 	align-items: center;
-	padding: 0.45rem 0;
+	padding: 0.5rem 0;
 	border-bottom: 1px solid var(--border);
 }
 
@@ -149,11 +141,14 @@ h3 {
 
 .qty {
 	border: 1px solid var(--border);
-	border-radius: 8px;
-	padding: 0.4rem;
+	border-radius: 10px;
+	padding: 0.65rem 0.45rem;
 	background: var(--input-bg);
 	color: inherit;
 	width: 100%;
+	font-size: 1.2rem;
+	font-weight: 650;
+	text-align: center;
 }
 
 .rm {
@@ -177,43 +172,5 @@ h3 {
 
 .send:disabled {
 	opacity: 0.5;
-}
-
-.confirm {
-	position: absolute;
-	inset: auto 0.5rem 3.5rem;
-	background: var(--bg-elevated);
-	border: 1px solid var(--border);
-	border-radius: 14px;
-	padding: 0.9rem;
-	box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
-}
-
-.confirm p {
-	margin: 0 0 0.65rem;
-	font-size: 0.95rem;
-}
-
-.confirm__actions {
-	display: grid;
-	gap: 0.4rem;
-}
-
-.primary {
-	border: 0;
-	border-radius: 10px;
-	padding: 0.7rem;
-	background: var(--accent);
-	color: var(--accent-fg);
-	font-weight: 650;
-}
-
-.ghost {
-	border: 0;
-	border-radius: 10px;
-	padding: 0.7rem;
-	background: transparent;
-	color: var(--muted);
-	font-weight: 650;
 }
 </style>

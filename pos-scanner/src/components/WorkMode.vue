@@ -142,12 +142,16 @@ async function onSend() {
 			feedback("added");
 			banner.value = t("cartSent");
 		} else if (outcome.kind === "pairing_lost") {
-			banner.value = t("pairAgainKeepCart");
+			banner.value = outcome.message
+				? `${t("pairAgainKeepCart")}: ${outcome.message}`
+				: t("pairAgainKeepCart");
 			emit("pair-again");
 		} else if (outcome.kind === "rejected") {
 			banner.value = t("cartSendRejected");
+		} else if (outcome.kind === "till_pending") {
+			banner.value = outcome.message || t("cartSendTillPending");
 		} else if (outcome.kind === "timeout") {
-			banner.value = t("cartSendTimeout");
+			banner.value = outcome.message || t("cartSendTimeout");
 		} else {
 			banner.value = outcome.message || t("cartSendError");
 		}

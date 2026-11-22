@@ -57,20 +57,77 @@ export async function callFrappeMethod(methodPath, params = {}, opts = {}) {
 		json = null;
 	}
 
-	if (!raw.ok) {
-		const msg =
-			json?.message ||
-			json?._error_message ||
-			json?.exc_type ||
-			raw.error ||
-			`HTTP ${raw.status}`;
-		const err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+	// Frappe sometimes returns HTTP 200 with exc / _server_messages on failure.
+	if (!raw.ok || hasFrappeException(json)) {
+		const msg = extractFrappeMessage(json, raw);
+		const err = new Error(msg);
 		err.status = raw.status;
 		err.payload = json;
+		err.excType = json?.exc_type || null;
 		throw err;
 	}
 
 	return json?.message !== undefined ? json.message : json;
+}
+
+/**
+ * @param {unknown} json
+ * @param {{ status?: number, error?: string, body?: string }} raw
+ */
+function extractFrappeMessage(json, raw) {
+	if (json && typeof json === "object") {
+		const serverMsgs = parseServerMessages(json._server_messages);
+		if (serverMsgs) return serverMsgs;
+		if (typeof json.message === "string" && json.message) return json.message;
+		if (json._error_message) return String(json._error_message);
+		if (json.exc_type) {
+			const tip = typeof json.exception === "string" ? json.exception.split("\n")[0] : "";
+			return tip || String(json.exc_type);
+		}
+	}
+	return raw?.error || `HTTP ${raw?.status || 0}`;
+}
+
+/** @param {unknown} json */
+function hasFrappeException(json) {
+	if (!json || typeof json !== "object") return false;
+	if (json.exc_type) return true;
+	if (typeof json.exc === "string" && json.exc.length) return true;
+	return false;
+}
+
+/** @param {unknown} raw */
+function parseServerMessages(raw) {
+	if (!raw) return "";
+	try {
+		const list = typeof raw === "string" ? JSON.parse(raw) : raw;
+		if (!Array.isArray(list)) return "";
+		const parts = list.map((row) => {
+			try {
+				const o = typeof row === "string" ? JSON.parse(row) : row;
+				return o?.message || o?.title || "";
+			} catch {
+				return typeof row === "string" ? row : "";
+			}
+		});
+		return parts.filter(Boolean).join(" — ");
+	} catch {
+		return typeof raw === "string" ? raw : "";
+	}
+}
+
+/**
+ * @param {unknown} err
+ * @param {string} [method]
+ */
+export function formatFrappeError(err, method = "") {
+	const payload = err?.payload;
+	const excType = err?.excType || payload?.exc_type || "";
+	const base = String(err?.message || err || "error");
+	const bits = [method, excType, base].filter(Boolean);
+	// de-dupe if message already contains method
+	const message = bits.filter((b, i) => bits.indexOf(b) === i).join(": ");
+	return { message, method: method || null, excType: excType || null };
 }
 
 /**
