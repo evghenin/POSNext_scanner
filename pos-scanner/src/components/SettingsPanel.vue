@@ -1,30 +1,46 @@
 <script setup>
 import { computed, reactive, ref, watch } from "vue";
+import { setLanguage, t } from "@/lib/i18n.js";
 import {
-	WORK_MODE_LABELS,
-	buildApiOrigin,
+	DEFAULT_API_ORIGIN,
 	loadSettings,
 	saveSettings,
 	validateSettingsPatch,
 } from "@/lib/settings.js";
-import {
-	applyNativeServerConfig,
-	isAndroidDemoShell,
-	isOfflineBundledUi,
-} from "@/lib/shellBridge.js";
+import { applyNativeServerConfig, isAndroidDemoShell, isOfflineBundledUi } from "@/lib/shellBridge.js";
+import { applyTheme } from "@/lib/theme.js";
 
 const props = defineProps({
 	modelValue: { type: Boolean, default: false },
+	/** First-run / blocking: no dismiss without save */
+	blocking: { type: Boolean, default: false },
 });
 const emit = defineEmits(["update:modelValue", "saved"]);
 
 const draft = reactive({ ...loadSettings() });
 const error = ref("");
-const savedMsg = ref("");
 const inApk = isAndroidDemoShell();
 const offlineUi = isOfflineBundledUi();
 
-const apiPreview = computed(() => buildApiOrigin({ serverUrl: draft.serverUrl }));
+const labels = computed(() => {
+	void draft.language;
+	return {
+		title: t("settings"),
+		close: t("close"),
+		save: t("save"),
+		serverUrl: t("serverUrl"),
+		hint: t("serverUrlHint"),
+		placeholder: t("serverUrlPlaceholder"),
+		language: t("language"),
+		theme: t("theme"),
+		langEn: t("langEn"),
+		langRo: t("langRo"),
+		langRu: t("langRu"),
+		themeSystem: t("themeSystem"),
+		themeDark: t("themeDark"),
+		themeLight: t("themeLight"),
+	};
+});
 
 watch(
 	() => props.modelValue,
@@ -32,122 +48,96 @@ watch(
 		if (open) {
 			Object.assign(draft, loadSettings());
 			error.value = "";
-			savedMsg.value = "";
 		}
+	},
+	{ immediate: true }
+);
+
+watch(
+	() => [draft.language, draft.theme],
+	() => {
+		setLanguage(draft.language);
+		applyTheme(draft.theme);
 	}
 );
 
 function close() {
+	if (props.blocking) return;
 	emit("update:modelValue", false);
 }
 
 function onSave() {
 	error.value = "";
-	savedMsg.value = "";
-	const result = validateSettingsPatch({ ...draft });
+	const result = validateSettingsPatch({ ...draft }, { t });
 	if (!result.ok) {
 		error.value = result.error;
 		return;
 	}
 	const next = saveSettings(result.settings);
 	Object.assign(draft, next);
-	emit("saved", next);
-
 	if (inApk || offlineUi) {
-		// Offline APK: persist API origin only — never a /pos-scanner path.
-		const path = offlineUi ? "" : next.scannerPath;
-		const applied = applyNativeServerConfig(next.serverUrl, path);
-		if (applied) {
-			savedMsg.value = offlineUi
-				? "Сохранено — URL только для API; интерфейс остаётся в приложении."
-				: "Сохранено — проверка сервера…";
-			return;
-		}
-		if (inApk) {
-			error.value =
-				"Мост приложения не ответил. Закройте настройки и переустановите APK при необходимости.";
+		const applied = applyNativeServerConfig(next.serverUrl, "");
+		if (!applied && inApk) {
+			error.value = t("bridgeError");
 			return;
 		}
 	}
-
-	savedMsg.value = "Сохранено";
+	emit("saved", next);
 }
 </script>
 
 <template>
-	<aside v-if="modelValue" class="settings" role="dialog" aria-modal="true" @click.self="close">
+	<aside
+		v-if="modelValue"
+		class="settings"
+		:class="{ 'settings--blocking': blocking }"
+		role="dialog"
+		aria-modal="true"
+		@click.self="close"
+	>
 		<div class="settings__panel">
 			<header class="settings__head">
-				<h2>Настройки</h2>
-				<button type="button" class="ghost" @click="close">Закрыть</button>
+				<h2>{{ labels.title }}</h2>
+				<button v-if="!blocking" type="button" class="ghost" @click="close">
+					{{ labels.close }}
+				</button>
 			</header>
 
-			<p v-if="offlineUi" class="hint apk">
-				APK: UI, OCR и WASM уже внутри приложения. URL сервера нужен только для API
-				(pairing / корзина), не для загрузки страницы сканера.
-			</p>
-			<p v-else-if="inApk" class="hint apk">
-				APK: смена URL сервера сохранится в приложении без пересборки.
-			</p>
-			<p v-else class="hint">
-				URL сервера — origin ERPNext/POSNext для API. Хостинг
-				<code>/pos-scanner</code> на сайте опционален (браузер); телефонный APK его не
-				требует.
-			</p>
+			<p class="hint">{{ labels.hint }}</p>
 
 			<label class="field">
-				<span>URL сервера API (HTTPS)</span>
+				<span>{{ labels.serverUrl }}</span>
 				<input
 					v-model="draft.serverUrl"
 					type="url"
 					inputmode="url"
 					autocomplete="url"
-					placeholder="https://erp.hotel-life.md"
+					:placeholder="labels.placeholder || DEFAULT_API_ORIGIN"
 				/>
 			</label>
 
-			<label v-if="!offlineUi" class="field">
-				<span>Путь сканера (опциональный host PWA)</span>
-				<input v-model="draft.scannerPath" type="text" placeholder="/pos-scanner" />
-			</label>
-
-			<p v-if="apiPreview" class="preview mono">API: {{ apiPreview }}</p>
-
-			<fieldset class="field">
-				<legend>Режим работы</legend>
-				<label class="radio" v-for="(label, key) in WORK_MODE_LABELS" :key="key">
-					<input v-model="draft.workMode" type="radio" :value="key" />
-					{{ label }}
-				</label>
-			</fieldset>
-
-			<label class="check">
-				<input v-model="draft.soundEnabled" type="checkbox" />
-				Звук при распознавании
-			</label>
-			<label class="check">
-				<input v-model="draft.vibrateEnabled" type="checkbox" />
-				Вибрация
-			</label>
-			<label class="check">
-				<input v-model="draft.torchDefault" type="checkbox" />
-				Включать фонарик при старте камеры (если поддерживается)
+			<label class="field">
+				<span>{{ labels.language }}</span>
+				<select v-model="draft.language">
+					<option value="en">{{ labels.langEn }}</option>
+					<option value="ro">{{ labels.langRo }}</option>
+					<option value="ru">{{ labels.langRu }}</option>
+				</select>
 			</label>
 
 			<label class="field">
-				<span>Язык (заготовка)</span>
-				<select v-model="draft.language">
-					<option value="ru">Русский</option>
-					<option value="ro">Română</option>
-					<option value="en">English</option>
+				<span>{{ labels.theme }}</span>
+				<select v-model="draft.theme">
+					<option value="system">{{ labels.themeSystem }}</option>
+					<option value="dark">{{ labels.themeDark }}</option>
+					<option value="light">{{ labels.themeLight }}</option>
 				</select>
 			</label>
 
 			<p v-if="error" class="err">{{ error }}</p>
-			<p v-if="savedMsg" class="ok">{{ savedMsg }}</p>
 
 			<div class="actions">
-				<button type="button" class="primary" @click="onSave">Сохранить</button>
+				<button type="button" class="primary" @click="onSave">{{ labels.save }}</button>
 			</div>
 		</div>
 	</aside>
@@ -163,13 +153,25 @@ function onSave() {
 	align-items: end;
 }
 
+.settings--blocking {
+	background: var(--bg);
+	align-items: stretch;
+}
+
+.settings--blocking .settings__panel {
+	border-radius: 0;
+	max-height: none;
+	height: 100%;
+	border-top: 0;
+}
+
 .settings__panel {
 	background: var(--bg-elevated);
 	border-radius: 16px 16px 0 0;
 	padding: 1.1rem 1rem 1.4rem;
 	max-height: 88vh;
 	overflow: auto;
-	border-top: 1px solid rgba(255, 255, 255, 0.08);
+	border-top: 1px solid var(--border);
 }
 
 .settings__head {
@@ -191,10 +193,6 @@ function onSave() {
 	line-height: 1.4;
 }
 
-.hint.apk {
-	color: var(--accent);
-}
-
 .field {
 	display: grid;
 	gap: 0.35rem;
@@ -203,50 +201,23 @@ function onSave() {
 	padding: 0;
 }
 
-.field span,
-.field legend {
+.field span {
 	font-size: 0.8rem;
 	color: var(--muted);
 }
 
 input[type="url"],
-input[type="text"],
 select {
-	background: #0a1020;
-	border: 1px solid rgba(148, 163, 184, 0.35);
+	background: var(--input-bg);
+	border: 1px solid var(--border);
 	border-radius: 10px;
 	color: var(--fg);
 	padding: 0.7rem 0.8rem;
 	font: inherit;
 }
 
-.radio,
-.check {
-	display: flex;
-	align-items: center;
-	gap: 0.5rem;
-	margin: 0.35rem 0;
-	font-size: 0.95rem;
-}
-
-.preview {
-	margin: -0.25rem 0 0.85rem;
-	color: var(--accent);
-	font-size: 0.8rem;
-	word-break: break-all;
-}
-
-.mono {
-	font-family: var(--mono);
-}
-
 .err {
 	color: var(--danger);
-	font-size: 0.9rem;
-}
-
-.ok {
-	color: var(--ok);
 	font-size: 0.9rem;
 }
 
@@ -265,7 +236,7 @@ select {
 .primary {
 	width: 100%;
 	background: var(--accent);
-	color: #04201b;
+	color: var(--accent-fg);
 }
 
 .ghost {

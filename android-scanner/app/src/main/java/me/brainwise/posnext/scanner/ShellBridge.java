@@ -8,9 +8,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * JS bridge for the WebView shell. Lets the PWA / bootstrap change
- * API server URL without rebuilding the APK. Offline builds keep the Vue UI
- * in assets — server URL is API-only (never a remote /pos-scanner load).
+ * JS bridge for the WebView shell. Lets the Vue UI change API server URL and
+ * run a native reachability probe (no CORS). Offline builds keep the Vue UI
+ * in assets — server URL is API-only.
  */
 public final class ShellBridge {
 	public interface Host {
@@ -25,6 +25,9 @@ public final class ShellBridge {
 		void applyServerConfig(@NonNull String serverUrl, @NonNull String scannerPath);
 
 		void retryLastServer();
+
+		/** Native frappe.ping probe; result delivered via {@code window.__posNextProbeDone}. */
+		void probeApi(@NonNull String serverUrl, @NonNull String callbackId);
 	}
 
 	private final Host host;
@@ -48,7 +51,6 @@ public final class ShellBridge {
 
 	@JavascriptInterface
 	public void applyServerConfig(String serverUrl, String scannerPath) {
-		// scannerPath ignored for offline bundle (API origin only).
 		host.applyServerConfig(
 				serverUrl == null ? "" : serverUrl.trim(),
 				scannerPath == null ? "" : scannerPath.trim());
@@ -57,5 +59,12 @@ public final class ShellBridge {
 	@JavascriptInterface
 	public void retryLastServer() {
 		host.retryLastServer();
+	}
+
+	@JavascriptInterface
+	public void probeApi(String serverUrl, String callbackId) {
+		host.probeApi(
+				serverUrl == null ? "" : serverUrl.trim(),
+				callbackId == null ? "" : callbackId.trim());
 	}
 }

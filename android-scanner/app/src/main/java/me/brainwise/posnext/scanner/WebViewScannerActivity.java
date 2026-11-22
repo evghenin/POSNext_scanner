@@ -35,9 +35,11 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.webkit.WebViewAssetLoader;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Fullscreen WebView shell that loads the Vue scanner from APK assets
@@ -64,7 +66,6 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 	private WebView webView;
 	private WebViewAssetLoader assetLoader;
 	private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
-	private final AtomicInteger probeGeneration = new AtomicInteger(0);
 
 	@Nullable private PermissionRequest pendingWebPermission;
 	private final ActivityResultLauncher<String> cameraPermissionLauncher =
@@ -296,15 +297,9 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 	@NonNull
 	@Override
 	public String getServerUrl() {
+		// Empty until the user saves settings (UX v2). Baked BuildConfig is only a UI placeholder.
 		String stored = prefs().getString(KEY_SERVER_URL, "");
-		if (stored != null && !stored.isEmpty()) {
-			return stored;
-		}
-		String baked = BuildConfig.SCANNER_ORIGIN;
-		if (baked.contains("example.com") || baked.isEmpty()) {
-			return "";
-		}
-		return baked;
+		return stored != null ? stored : "";
 	}
 
 	@NonNull
@@ -336,55 +331,66 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 					if (!isBundledScannerUrl(current) && !isLocalAsset(current)) {
 						openBundledScanner();
 					}
-					if (!origin.isEmpty()) {
-						softProbeApiInBackground(origin);
-					}
 				});
 	}
 
 	@Override
 	public void retryLastServer() {
-		runOnMain(
-				() -> {
-					openBundledScanner();
-					String origin = getServerUrl();
-					if (!origin.isEmpty() && !origin.contains("example.com")) {
-						softProbeApiInBackground(origin);
-					}
-				});
+		runOnMain(this::openBundledScanner);
 	}
 
-	/**
-	 * Background-only API reachability check. Never shows a loading screen or
-	 * blocks the local scanner UI (pairing/cart will need network later).
-	 */
-	private void softProbeApiInBackground(@NonNull String origin) {
-		final int gen = probeGeneration.incrementAndGet();
+	@Override
+	public void probeApi(@NonNull String serverUrl, @NonNull String callbackId) {
+		final String origin = normalizeOrigin(serverUrl.isEmpty() ? getServerUrl() : serverUrl);
+		final String cb = callbackId;
+		if (cb.isEmpty()) {
+			return;
+		}
 		probeExecutor.execute(
 				() -> {
 					ScannerProbe.Result result;
 					try {
-						result = ScannerProbe.probeApi(origin);
+						result =
+								origin.isEmpty()
+										? new ScannerProbe.Result(false, "invalid_url", null, "")
+										: ScannerProbe.probeApi(origin);
 					} catch (Throwable t) {
 						Log.e(TAG, "API probe crashed", t);
 						result = new ScannerProbe.Result(false, "unknown", null, origin);
 					}
-					final ScannerProbe.Result finalResult = result;
-					runOnMain(
-							() -> {
-								if (gen != probeGeneration.get()) {
-									return;
-								}
-								if (!finalResult.ok) {
-									Toast.makeText(
-													this,
-													"API недоступен ("
-															+ finalResult.kind
-															+ "). OCR работает офлайн.",
-													Toast.LENGTH_LONG)
-											.show();
-								}
-							});
+					deliverProbeResult(cb, result);
+				});
+	}
+
+	private void deliverProbeResult(@NonNull String callbackId, @NonNull ScannerProbe.Result result) {
+		JSONObject o = new JSONObject();
+		try {
+			o.put("ok", result.ok);
+			o.put("kind", result.kind);
+			if (result.status != null) {
+				o.put("status", result.status.intValue());
+			} else {
+				o.put("status", JSONObject.NULL);
+			}
+			o.put("url", result.url);
+		} catch (JSONException ignored) {
+			/* empty */
+		}
+		final String json = o.toString();
+		final String idEsc = callbackId.replace("\\", "\\\\").replace("'", "\\'");
+		final String jsonEsc = json.replace("\\", "\\\\").replace("'", "\\'");
+		runOnMain(
+				() -> {
+					if (webView == null) {
+						return;
+					}
+					webView.evaluateJavascript(
+							"window.__posNextProbeDone && window.__posNextProbeDone('"
+									+ idEsc
+									+ "','"
+									+ jsonEsc
+									+ "')",
+							null);
 				});
 	}
 

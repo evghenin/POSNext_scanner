@@ -3,6 +3,7 @@ import {
 	buildApiOrigin,
 	buildScannerPageUrl,
 	defaultSettings,
+	hasSavedSettings,
 	isBundledUiOrigin,
 	migrateSettings,
 	normalizeScannerPath,
@@ -11,6 +12,15 @@ import {
 } from "./settings.js";
 
 describe("settings", () => {
+	it("defaults: empty URL, English, system theme, not configured", () => {
+		const s = defaultSettings();
+		expect(s.serverUrl).toBe("");
+		expect(s.language).toBe("en");
+		expect(s.theme).toBe("system");
+		expect(s.configured).toBe(false);
+		expect(s.version).toBe(4);
+	});
+
 	it("normalizes server URL and path", () => {
 		expect(normalizeServerUrl("https://pos.example.com/")).toBe("https://pos.example.com");
 		expect(normalizeServerUrl("pos.example.com")).toBe("https://pos.example.com");
@@ -18,28 +28,36 @@ describe("settings", () => {
 		expect(normalizeScannerPath("/pos-scanner/")).toBe("/pos-scanner");
 	});
 
-	it("migrates unversioned blobs to current version", () => {
+	it("migrates unversioned blobs; empty example.com; language en default", () => {
 		const s = migrateSettings({
 			siteUrl: "https://a.example/",
 			workMode: "accumulate",
 			soundEnabled: false,
 		});
-		expect(s.version).toBe(3);
+		expect(s.version).toBe(4);
 		expect(s.serverUrl).toBe("https://a.example");
 		expect(s.workMode).toBe("accumulate");
 		expect(s.soundEnabled).toBe(false);
-		expect(s.scannerPath).toBe("/pos-scanner");
+		expect(s.language).toBe("en");
+		expect(s.theme).toBe("system");
 	});
 
-	it("replaces bundled UI origins / example.com with live ERP default", () => {
+	it("clears bundled UI origins; marks pre-v4 with URL as configured", () => {
 		const s = migrateSettings({
-			version: 1,
-			serverUrl: "https://appassets.androidplatform.net",
+			version: 3,
+			serverUrl: "https://erp.hotel-life.md",
+			language: "ru",
 		});
 		expect(s.serverUrl).toBe("https://erp.hotel-life.md");
+		expect(s.configured).toBe(true);
+		expect(s.language).toBe("ru");
 		expect(isBundledUiOrigin("https://appassets.androidplatform.net")).toBe(true);
-		const demo = migrateSettings({ version: 2, serverUrl: "https://example.com" });
-		expect(demo.serverUrl).toBe("https://erp.hotel-life.md");
+		const cleared = migrateSettings({
+			version: 2,
+			serverUrl: "https://appassets.androidplatform.net",
+		});
+		expect(cleared.serverUrl).toBe("");
+		expect(cleared.configured).toBe(false);
 	});
 
 	it("builds page and API URLs", () => {
@@ -49,7 +67,8 @@ describe("settings", () => {
 		expect(buildApiOrigin({ serverUrl: "https://a.example/" })).toBe("https://a.example");
 	});
 
-	it("rejects invalid server URL and bundled origins", () => {
+	it("rejects empty / invalid / bundled URLs", () => {
+		expect(validateSettingsPatch({ ...defaultSettings(), serverUrl: "" }).ok).toBe(false);
 		expect(validateSettingsPatch({ ...defaultSettings(), serverUrl: "not a url" }).ok).toBe(
 			false
 		);
@@ -59,5 +78,21 @@ describe("settings", () => {
 				serverUrl: "https://appassets.androidplatform.net",
 			}).ok
 		).toBe(false);
+		const ok = validateSettingsPatch({
+			...defaultSettings(),
+			serverUrl: "https://erp.hotel-life.md",
+			language: "ro",
+			theme: "dark",
+		});
+		expect(ok.ok).toBe(true);
+		if (ok.ok) {
+			expect(ok.settings.configured).toBe(true);
+			expect(ok.settings.language).toBe("ro");
+			expect(ok.settings.theme).toBe("dark");
+		}
+	});
+
+	it("hasSavedSettings is false without localStorage blob", () => {
+		expect(hasSavedSettings()).toBe(false);
 	});
 });
