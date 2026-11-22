@@ -184,3 +184,21 @@ export async function redeemPairingFromQr(qrRaw) {
 	});
 	return session;
 }
+
+/**
+ * Phone disconnects itself via Guest + link_token.
+ * Clears local session even if the network call fails.
+ */
+export async function disconnectSelf() {
+	const session = loadPairingSession();
+	const linkToken = session?.linkToken;
+	try {
+		if (linkToken) {
+			await callFrappeMethod("pos_next.api.mobile_scanner.disconnect_self", {
+				link_token: linkToken,
+			});
+		}
+	} finally {
+		clearPairingSession();
+	}
+}

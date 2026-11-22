@@ -264,7 +264,15 @@ export function useScanner(camera) {
 			const rate = item?.rate;
 			if (!found || rate == null || !Number.isFinite(Number(rate))) {
 				feedback("error");
-				lastError.value = !found ? "item_missing" : "item_no_price";
+				if (lookup?.error === "lookup_api_missing") {
+					lastError.value = "lookup_api_missing";
+				} else if (lookup?.error === "not_connected") {
+					lastError.value = "not_connected";
+				} else if (!found) {
+					lastError.value = "item_missing";
+				} else {
+					lastError.value = "item_no_price";
+				}
 				dedupe.forget(payload.value);
 				result.value = null;
 				pendingChoice.value = null;

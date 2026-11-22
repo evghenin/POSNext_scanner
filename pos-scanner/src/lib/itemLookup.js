@@ -1,12 +1,28 @@
+/**
+ * Live item lookup for the connected scanner.
+ *
+ * Phone has no ERPNext login. Auth is the session `link_token` from QR connect.
+ * Calls guest method: pos_next.api.mobile_scanner.lookup_item
+ */
+
 import { callFrappeMethod } from "./apiClient.js";
+import { loadPairingSession } from "./pairing.js";
 import { buildApiOrigin, loadSettings } from "./settings.js";
 
+/** Server method the POSNext worker must expose (Guest + link_token). */
+export const LOOKUP_ITEM_METHOD = "pos_next.api.mobile_scanner.lookup_item";
+
 /**
- * Live item lookup against POSNext / ERPNext.
- *
  * @param {string} code
- * @param {{ serverUrl?: string }} [opts]
- * @returns {Promise<{ found: boolean, item: object | null, query: string, source: "api" | "local" }>}
+ * @param {{ serverUrl?: string, linkToken?: string }} [opts]
+ * @returns {Promise<{
+ *   found: boolean,
+ *   item: object | null,
+ *   query: string,
+ *   source: "api" | "local",
+ *   error?: string,
+ *   method?: string,
+ * }>}
  */
 export async function lookupItem(code, opts = {}) {
 	const q = String(code || "").trim();
@@ -16,47 +32,75 @@ export async function lookupItem(code, opts = {}) {
 	const origin = buildApiOrigin({
 		serverUrl: opts.serverUrl ?? settings.serverUrl,
 	});
-
-	if (origin) {
-		try {
-			const apiHit = await searchByBarcodeApi(origin, q);
-			if (apiHit) {
-				return { found: true, item: apiHit, query: q, source: "api" };
-			}
-			return { found: false, item: null, query: q, source: "api" };
-		} catch (e) {
-			console.warn("[itemLookup] API lookup failed", e?.message || e);
-		}
+	if (!origin) {
+		return { found: false, item: null, query: q, source: "local", error: "missing_server" };
 	}
 
-	return { found: false, item: null, query: q, source: "local" };
+	const session = loadPairingSession();
+	const linkToken = opts.linkToken ?? session?.linkToken ?? "";
+	if (!linkToken) {
+		return { found: false, item: null, query: q, source: "api", error: "not_connected" };
+	}
+
+	try {
+		const message = await callFrappeMethod(LOOKUP_ITEM_METHOD, {
+			link_token: linkToken,
+			code: q,
+		});
+		const item = normalizeLookupMessage(origin, q, message);
+		if (item) return { found: true, item, query: q, source: "api" };
+		return { found: false, item: null, query: q, source: "api" };
+	} catch (e) {
+		const msg = String(e?.message || e || "");
+		const status = Number(e?.status) || 0;
+		if (isMissingLookupMethod(msg, status, e?.payload)) {
+			console.warn("[itemLookup] server method missing:", LOOKUP_ITEM_METHOD, msg);
+			return {
+				found: false,
+				item: null,
+				query: q,
+				source: "api",
+				error: "lookup_api_missing",
+				method: LOOKUP_ITEM_METHOD,
+			};
+		}
+		console.warn("[itemLookup] API lookup failed", msg);
+		return {
+			found: false,
+			item: null,
+			query: q,
+			source: "api",
+			error: msg || "lookup_failed",
+		};
+	}
+}
+
+/**
+ * True when the Guest+link_token lookup endpoint is missing or not callable yet.
+ * @param {string} message
+ * @param {number} status
+ * @param {unknown} payload
+ */
+function isMissingLookupMethod(message, status, payload) {
+	const blob = `${message} ${payload?.exc_type || ""} ${JSON.stringify(payload || {})}`;
+	if (status === 404) return true;
+	if (/MethodNotFound|does not exist|AttributeError|Unknown method/i.test(blob)) return true;
+	// Method not allow_guest / still requires login
+	if (/PermissionError|not permitted|Login required|AuthenticationError|403/i.test(blob)) {
+		return true;
+	}
+	return false;
 }
 
 /**
  * @param {string} origin
- * @param {string} barcode
+ * @param {string} query
+ * @param {unknown} message
  */
-async function searchByBarcodeApi(origin, barcode) {
-	let message = null;
-	try {
-		message = await callFrappeMethod("pos_next.api.items.search_by_barcode", {
-			barcode,
-		});
-	} catch {
-		// Guest GET fallback (no phone credentials)
-		const url = new URL("/api/method/pos_next.api.items.search_by_barcode", origin);
-		url.searchParams.set("barcode", barcode);
-		const res = await fetch(url.toString(), {
-			method: "GET",
-			credentials: "omit",
-			headers: { Accept: "application/json" },
-		});
-		if (!res.ok) return null;
-		const json = await res.json();
-		message = json?.message;
-	}
-
+function normalizeLookupMessage(origin, query, message) {
 	if (!message || typeof message !== "object") return null;
+	if (message.found === false) return null;
+
 	const item = message.item || message;
 	const itemCode = item.item_code || item.name;
 	if (!itemCode) return null;
@@ -69,7 +113,7 @@ async function searchByBarcodeApi(origin, barcode) {
 	return {
 		item_code: itemCode,
 		item_name: item.item_name || itemCode,
-		barcode: item.barcode || barcode,
+		barcode: item.barcode || query,
 		uom: stockUom || uoms[0] || "Nos",
 		stock_uom: stockUom || uoms[0] || "Nos",
 		uoms,
@@ -118,7 +162,6 @@ function collectUomDetails(item, message, stockUom) {
 }
 
 /**
- * Price per 1 base (stock) unit.
  * @param {object} item
  * @param {object} message
  * @param {string | null} stockUom
