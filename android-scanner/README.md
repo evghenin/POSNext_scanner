@@ -17,8 +17,9 @@ Decoding stays **inside the page** (zxing-wasm + tesseract). Assets load via
 
 - Application id: `me.brainwise.posnext.scanner`
 - Demo debug id: `me.brainwise.posnext.scanner.demo.debug`
-- Version: see `app/build.gradle.kts` (`0.2.2+`)
+- Version: see `app/build.gradle.kts` (`0.2.3+`)
 - Asset mapping: `/www/` → `assets/www/` via `BundledWwwAssetsHandler` (not stock `AssetsPathHandler`)
+- Live frames coerced to ImageData/canvas before zxing-wasm / tesseract (no sticky «Invalid input type»)
 
 ## Build debug APK
 

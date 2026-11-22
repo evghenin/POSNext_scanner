@@ -3,6 +3,7 @@ import { decodeBarcodes, getBarcodeEngineInfo, prepareBarcodeEngine } from "@/li
 import { createDedupe } from "@/lib/dedupe.js";
 import { feedback } from "@/lib/feedback.js";
 import { lookupItem } from "@/lib/mockCatalog.js";
+import { isTransientFrameError } from "@/lib/framePixels.js";
 import {
 	getLastOcrError,
 	getOcrCacheHints,
@@ -214,8 +215,14 @@ export function useScanner(camera) {
 				}
 			}
 		} catch (e) {
-			const msg = e?.message || String(e);
-			lastError.value = msg.startsWith("OCR") ? msg : `OCR ошибка: ${msg}`;
+			// zxing-wasm / empty first frames throw TypeError("Invalid input type") —
+			// never promote those to a sticky red OCR banner.
+			if (isTransientFrameError(e)) {
+				console.warn("[scanner] transient frame skip", e?.message || e);
+			} else {
+				const msg = e?.message || String(e);
+				lastError.value = msg.startsWith("OCR") ? msg : `OCR ошибка: ${msg}`;
+			}
 		} finally {
 			busy = false;
 			schedule();

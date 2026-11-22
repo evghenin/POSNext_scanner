@@ -1,4 +1,5 @@
 import { set as idbSet, get as idbGet } from "idb-keyval";
+import { toCanvas } from "./framePixels.js";
 import { extractSkuCodes } from "./sku.js";
 
 /** @typedef {{ codes: string[], rawText: string, durationMs: number }} OcrResult */
@@ -247,7 +248,10 @@ function paintPreprocess(source, target, w, h) {
  * OCR limited to the provided canvas/image (caller crops to reticle).
  * Runs raw + preprocessed passes and merges SKU hits (never silent pick among many).
  *
- * @param {HTMLCanvasElement | ImageBitmap | OffscreenCanvas | Blob | ArrayBuffer | Buffer | string} image
+ * Live camera frames are coerced to HTMLCanvasElement first — Android WebView may
+ * hand ImageBitmap / VideoFrame / video elements that tesseract.js rejects.
+ *
+ * @param {HTMLCanvasElement | ImageBitmap | OffscreenCanvas | Blob | ArrayBuffer | Buffer | string | ImageData} image
  * @returns {Promise<OcrResult>}
  */
 export async function recognizeSkuInRegion(image) {
@@ -270,17 +274,20 @@ export async function recognizeSkuInRegion(image) {
 		}
 	};
 
-	const { data } = await worker.recognize(image);
+	const canvas = coerceOcrInput(image);
+	if (!canvas) {
+		throw new TypeError("Cannot capture OCR frame (empty canvas)");
+	}
+
+	const { data } = await worker.recognize(canvas);
 	note(data?.text || "", 1);
 
-	if (image && typeof image === "object" && "width" in image) {
-		try {
-			const boosted = preprocessOcrCanvas(/** @type {HTMLCanvasElement} */ (image), 2);
-			const second = await worker.recognize(boosted);
-			note(second?.data?.text || "", 2);
-		} catch {
-			/* preprocess optional */
-		}
+	try {
+		const boosted = preprocessOcrCanvas(canvas, 2);
+		const second = await worker.recognize(boosted);
+		note(second?.data?.text || "", 2);
+	} catch {
+		/* preprocess optional */
 	}
 
 	const ranked = codeOrder.length
@@ -294,6 +301,26 @@ export async function recognizeSkuInRegion(image) {
 		rawText: texts.filter(Boolean).join("\n---\n"),
 		durationMs: Math.round(performance.now() - started),
 	};
+}
+
+/**
+ * @param {unknown} image
+ * @returns {HTMLCanvasElement | OffscreenCanvas | Blob | ArrayBuffer | Buffer | string | null}
+ */
+function coerceOcrInput(image) {
+	if (image == null) return null;
+	// Encoded stills (fixtures / Node) — pass through for tesseract.
+	if (typeof image === "string") return image;
+	if (typeof Buffer !== "undefined" && Buffer.isBuffer?.(image)) return image;
+	if (image instanceof ArrayBuffer) return image;
+	if (ArrayBuffer.isView(image) && !(typeof ImageData !== "undefined" && image instanceof ImageData)) {
+		return image;
+	}
+	if (typeof Blob !== "undefined" && image instanceof Blob) return image;
+
+	const canvas = toCanvas(image);
+	if (canvas && canvas.width > 0 && canvas.height > 0) return canvas;
+	return null;
 }
 
 /**
