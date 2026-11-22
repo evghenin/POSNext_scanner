@@ -41,10 +41,16 @@ export function useCamera() {
 			ready.value = true;
 			await refreshTorchCapability();
 		} catch (e) {
-			error.value =
-				e?.name === "NotAllowedError"
-					? "Доступ к камере запрещён"
-					: e?.message || "Не удалось открыть камеру";
+			if (e?.name === "NotAllowedError" || e?.name === "PermissionDeniedError") {
+				error.value =
+					"Доступ к камере запрещён. Разрешите камеру для POSNext Scanner в настройках Android и нажмите «Открыть камеру» снова.";
+			} else if (e?.name === "NotFoundError") {
+				error.value = "Камера не найдена на устройстве.";
+			} else if (e?.name === "NotReadableError") {
+				error.value = "Камера занята другим приложением. Закройте его и повторите.";
+			} else {
+				error.value = e?.message || "Не удалось открыть камеру";
+			}
 			ready.value = false;
 		}
 	}

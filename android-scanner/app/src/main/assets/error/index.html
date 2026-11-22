@@ -145,8 +145,17 @@
 			});
 
 			document.getElementById("retry").onclick = function () {
+				var btn = document.getElementById("retry");
+				btn.disabled = true;
+				btn.textContent = "Проверка…";
 				if (window.PosNextShell && window.PosNextShell.retryLastServer) {
-					window.PosNextShell.retryLastServer();
+					try {
+						window.PosNextShell.retryLastServer();
+					} catch (e) {
+						btn.disabled = false;
+						btn.textContent = "Повторить";
+						alert("Ошибка: " + (e && e.message ? e.message : e));
+					}
 					return;
 				}
 				location.href = "file:///android_asset/bootstrap/index.html";
