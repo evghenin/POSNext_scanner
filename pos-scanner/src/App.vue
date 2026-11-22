@@ -264,7 +264,16 @@ async function retryConnection() {
 				<span v-if="scanner.engineInfo.value">
 					{{ scanner.engineInfo.value.native ? "native+zxing" : "zxing" }}
 				</span>
+				<span :data-ocr="scanner.ocrReady.value ? 'ok' : 'bad'">
+					{{ scanner.ocrReady.value ? "OCR ok" : "OCR…" }}
+				</span>
 			</div>
+			<p
+				v-if="started && scanner.lastError.value"
+				class="scan-err"
+			>
+				{{ scanner.lastError.value }}
+			</p>
 		</main>
 
 		<footer class="bar" v-if="started">
@@ -492,6 +501,25 @@ async function retryConnection() {
 	padding: 0.2rem 0.45rem;
 	border-radius: 999px;
 	backdrop-filter: blur(6px);
+}
+
+.hud span[data-ocr="bad"] {
+	color: var(--warn);
+}
+
+.scan-err {
+	position: absolute;
+	left: 0.75rem;
+	right: 0.75rem;
+	bottom: 0.75rem;
+	z-index: 2;
+	margin: 0;
+	padding: 0.45rem 0.65rem;
+	border-radius: 10px;
+	background: rgba(80, 20, 20, 0.82);
+	color: #fecaca;
+	font-size: 0.78rem;
+	line-height: 1.35;
 }
 
 .bar {

@@ -1,16 +1,19 @@
 {
 	"name": "posnext-pos-scanner",
 	"private": true,
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"type": "module",
 	"description": "POSNext Mobile Scanner recognition prototype (camera 1D/2D + OCR SKU)",
 	"scripts": {
 		"dev": "vite",
+		"vendor:ocr": "node scripts/vendor-ocr.mjs",
+		"prebuild": "node scripts/vendor-ocr.mjs",
 		"build": "POS_SCANNER_BASE=${POS_SCANNER_BASE:-/assets/pos_next/pos_scanner/} vite build",
 		"build:standalone": "POS_SCANNER_BASE=/ vite build",
 		"preview": "vite preview",
 		"test": "vitest run",
-		"test:watch": "vitest"
+		"test:watch": "vitest",
+		"test:ocr-fixtures": "vitest run src/lib/ocr.shelf.spec.js"
 	},
 	"dependencies": {
 		"tesseract.js": "^5.1.1",
@@ -19,6 +22,7 @@
 	},
 	"devDependencies": {
 		"@vitejs/plugin-vue": "^5.1.4",
+		"jimp": "^1.6.0",
 		"jsdom": "^25.0.1",
 		"vite": "^5.4.10",
 		"vitest": "^2.1.9"

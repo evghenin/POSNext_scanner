@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractSkuCodes } from "./sku.js";
+import { extractSkuCodes, normalizeOcrText } from "./sku.js";
 
 describe("extractSkuCodes", () => {
 	it("finds SKU with case fold and uppercases", () => {
@@ -16,5 +16,18 @@ describe("extractSkuCodes", () => {
 			"SKU00001",
 			"SKU00002",
 		]);
+	});
+
+	it("recovers common OCR confusions", () => {
+		expect(extractSkuCodes("артикул SKUO0776")).toEqual(["SKU00776"]);
+		expect(extractSkuCodes("scu00668 on tag")).toEqual(["SKU00668"]);
+		expect(extractSkuCodes("SKU 0 0 7 7 6")).toEqual(["SKU00776"]);
+	});
+});
+
+describe("normalizeOcrText", () => {
+	it("folds SCU / spaced SKU prefixes", () => {
+		expect(normalizeOcrText("scu00668")).toContain("SKU00668");
+		expect(normalizeOcrText("S K U00776")).toContain("SKU");
 	});
 });

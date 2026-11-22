@@ -62,7 +62,9 @@ POS_SCANNER_BASE=/assets/pos_next/pos_scanner/ npm run build
 | Tesseract core + eng | ~5–9 MB | **Must precache** worker + core + `eng.traineddata` before offline OCR |
 | Total cold cache | ~8–12 MB | Acceptable for staff PWA; gate OCR behind “download language pack” if needed |
 
-Dev currently loads Tesseract assets from jsDelivr — **production must vendor them** under `public/ocr/` and list them in Workbox `globPatterns` / `additionalManifestEntries`.
+Production builds vendor Tesseract under `public/ocr/` (`npm run vendor:ocr`, also `prebuild`). Dev uses the correct jsDelivr packages (`@tesseract.js-data/eng` + LSTM SIMD core) — do **not** point `langPath` at `tesseract.js-core/tessdata` (404).
+
+Shelf-tag still fixtures: `npm run test:ocr-fixtures` (Hotel Life `SKU00776` / `SKU00668` samples under `fixtures/ocr-shelf-tags/`).
 
 ## Safari / iOS constraints (honest)
 
