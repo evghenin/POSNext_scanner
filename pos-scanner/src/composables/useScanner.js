@@ -3,7 +3,12 @@ import { decodeBarcodes, getBarcodeEngineInfo, prepareBarcodeEngine } from "@/li
 import { createDedupe } from "@/lib/dedupe.js";
 import { feedback } from "@/lib/feedback.js";
 import { lookupItem } from "@/lib/mockCatalog.js";
-import { getOcrCacheHints, prepareOcrEngine, recognizeSkuInRegion } from "@/lib/ocr.js";
+import {
+	getLastOcrError,
+	getOcrCacheHints,
+	prepareOcrEngine,
+	recognizeSkuInRegion,
+} from "@/lib/ocr.js";
 
 /**
  * Recognition loop: barcode first; OCR only when no barcode in the reticle.
@@ -16,6 +21,7 @@ export function useScanner(camera) {
 	const lastError = ref(null);
 	const engineInfo = ref(null);
 	const ocrHints = ref(null);
+	const ocrReady = ref(false);
 	const fpsHint = ref(0);
 	const lastDecodeMs = ref(0);
 
@@ -41,13 +47,18 @@ export function useScanner(camera) {
 		try {
 			await prepareBarcodeEngine();
 			engineInfo.value = await getBarcodeEngineInfo();
-			// OCR warm is optional at start — kick in background
+			// OCR warm in background — surface failure (was previously silent).
 			prepareOcrEngine()
 				.then(() => {
+					ocrReady.value = true;
 					ocrHints.value = getOcrCacheHints();
 				})
 				.catch((e) => {
-					console.warn("[scanner] OCR warm failed", e);
+					ocrReady.value = false;
+					ocrHints.value = getOcrCacheHints();
+					const msg = e?.message || getLastOcrError() || String(e);
+					console.warn("[scanner] OCR warm failed", msg);
+					lastError.value = `OCR не загрузился: ${msg}`;
 				});
 			status.value = "ready";
 		} catch (e) {
@@ -138,32 +149,49 @@ export function useScanner(camera) {
 				};
 				feedback("recognized");
 			} else {
-				// No barcode → OCR on reticle (throttled)
+				// No barcode → OCR on a slightly taller reticle (throttled)
 				ocrEvery = (ocrEvery + 1) % OCR_EVERY_N_PASSES;
 				if (ocrEvery === 0) {
-					const ocr = await recognizeSkuInRegion(frame.canvas);
-					if (ocr.codes.length === 1) {
-						await emitRecognition({
-							value: ocr.codes[0],
-							format: "OCR SKU",
-							source: "ocr",
-							engine: "tesseract",
-							rawText: ocr.rawText,
-							durationMs: ocr.durationMs,
-						});
-					} else if (ocr.codes.length > 1) {
-						pauseForUi();
-						pendingChoice.value = {
-							kind: "ocr",
-							source: "ocr",
-							candidates: ocr.codes.map((code) => ({
-								value: code,
+					if (!ocrReady.value) {
+						// Retry warm if earlier CDN/path load failed
+						prepareOcrEngine()
+							.then(() => {
+								ocrReady.value = true;
+								lastError.value = null;
+							})
+							.catch((e) => {
+								lastError.value = `OCR: ${e?.message || getLastOcrError() || e}`;
+							});
+					} else {
+						const ocrFrame =
+							typeof camera.captureOcrReticle === "function"
+								? camera.captureOcrReticle(cropCanvas)
+								: frame;
+						const ocr = await recognizeSkuInRegion((ocrFrame || frame).canvas);
+						lastDecodeMs.value = ocr.durationMs;
+						if (ocr.codes.length === 1) {
+							await emitRecognition({
+								value: ocr.codes[0],
 								format: "OCR SKU",
+								source: "ocr",
 								engine: "tesseract",
-							})),
-							rawText: ocr.rawText,
-						};
-						feedback("recognized");
+								rawText: ocr.rawText,
+								durationMs: ocr.durationMs,
+							});
+						} else if (ocr.codes.length > 1) {
+							pauseForUi();
+							pendingChoice.value = {
+								kind: "ocr",
+								source: "ocr",
+								candidates: ocr.codes.map((code) => ({
+									value: code,
+									format: "OCR SKU",
+									engine: "tesseract",
+								})),
+								rawText: ocr.rawText,
+							};
+							feedback("recognized");
+						}
 					}
 				}
 			}
@@ -245,6 +273,7 @@ export function useScanner(camera) {
 		lastError,
 		engineInfo,
 		ocrHints,
+		ocrReady,
 		fpsHint,
 		lastDecodeMs,
 		pendingChoice,

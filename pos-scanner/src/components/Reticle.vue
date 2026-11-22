@@ -4,7 +4,7 @@
 			<span class="c tl" /><span class="c tr" /><span class="c bl" /><span class="c br" />
 			<div class="reticle__scanline" />
 		</div>
-		<p class="reticle__hint">Наведите на штрихкод или печатный SKU#####</p>
+		<p class="reticle__hint">Наведите на штрихкод или печатный SKU/NSU/SRV#####</p>
 	</div>
 </template>
 

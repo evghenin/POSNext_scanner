@@ -30,6 +30,22 @@ const MOCK_ITEMS = [
 		image: null,
 	},
 	{
+		item_code: "NSU00001",
+		item_name: "Демо NSU-артикул",
+		barcode: "NSU00001",
+		uom: "Nos",
+		rate: 9.5,
+		image: null,
+	},
+	{
+		item_code: "SRV00001",
+		item_name: "Демо SRV-услуга",
+		barcode: "SRV00001",
+		uom: "Nos",
+		rate: 25.0,
+		image: null,
+	},
+	{
 		item_code: "DEMO-QR",
 		item_name: "Демо QR-товар",
 		barcode: "DEMO-QR-001",

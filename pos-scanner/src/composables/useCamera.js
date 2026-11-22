@@ -100,6 +100,7 @@ export function useCamera() {
 
 	/**
 	 * Crop the center reticle region from the current video frame into a canvas.
+	 * Default ratios match the on-screen frame; OCR may request a taller crop.
 	 * @param {HTMLCanvasElement} canvas
 	 * @param {{ widthRatio?: number, heightRatio?: number }} [opts]
 	 */
@@ -123,6 +124,11 @@ export function useCamera() {
 		return { canvas, sx, sy, rw, rh, vw, vh };
 	}
 
+	/** Slightly taller crop so bottom-of-tag SKU print stays inside the OCR ROI. */
+	function captureOcrReticle(canvas) {
+		return captureReticle(canvas, { widthRatio: 0.78, heightRatio: 0.36 });
+	}
+
 	onBeforeUnmount(stop);
 
 	return {
@@ -138,6 +144,7 @@ export function useCamera() {
 		setTorch,
 		toggleTorch,
 		captureReticle,
+		captureOcrReticle,
 		getVideoTrack,
 	};
 }

@@ -10,7 +10,7 @@ Path: `pos-scanner/` (separate from the `/pos` till SPA per [fork audit](../docs
 |--------|--------|-----|
 | 1D/2D | **`zxing-wasm`** (ZXing-C++ WASM) | Covers EAN-8/13, UPC-A/E, Code 39/128, QR, Data Matrix, PDF417 in one engine; works where native `BarcodeDetector` is missing or broken (Safari/iOS). |
 | Fast path | Native **`BarcodeDetector`** when `getSupportedFormats()` includes retail formats | Chrome Android only in practice; never relied on alone. |
-| OCR | **`tesseract.js` v5** (eng) | Browser WASM OCR; crop to reticle; regex `\bSKU\d{5}\b` → uppercase; multi-match → picker. |
+| OCR | **`tesseract.js` v5** (eng) | Browser WASM OCR; crop to reticle; regex `\b(?:SKU|NSU|SRV)\d{5}\b` → uppercase; multi-match → picker. |
 | UI | Vue 3 + Vite | Matches POSNext frontend toolchain; tiny surface area. |
 | Lookup | Mock catalog | Swap later for `pos_next.api.items.search_by_barcode`. |
 
@@ -62,7 +62,9 @@ POS_SCANNER_BASE=/assets/pos_next/pos_scanner/ npm run build
 | Tesseract core + eng | ~5–9 MB | **Must precache** worker + core + `eng.traineddata` before offline OCR |
 | Total cold cache | ~8–12 MB | Acceptable for staff PWA; gate OCR behind “download language pack” if needed |
 
-Dev currently loads Tesseract assets from jsDelivr — **production must vendor them** under `public/ocr/` and list them in Workbox `globPatterns` / `additionalManifestEntries`.
+Production builds vendor Tesseract under `public/ocr/` (`npm run vendor:ocr`, also `prebuild`). Dev uses the correct jsDelivr packages (`@tesseract.js-data/eng` + LSTM SIMD core) — do **not** point `langPath` at `tesseract.js-core/tessdata` (404).
+
+Shelf-tag still fixtures: `npm run test:ocr-fixtures` (Hotel Life `SKU00776` / `SKU00668` samples under `fixtures/ocr-shelf-tags/`).
 
 ## Safari / iOS constraints (honest)
 

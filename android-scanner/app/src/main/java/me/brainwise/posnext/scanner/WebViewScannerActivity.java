@@ -118,7 +118,7 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		settings.setAllowContentAccess(false);
 		settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 		settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
-		settings.setUserAgentString(settings.getUserAgentString() + " POSNextScannerAPK/0.1");
+		settings.setUserAgentString(settings.getUserAgentString() + " POSNextScannerAPK/0.1.2");
 
 		webView.addJavascriptInterface(new ShellBridge(this), "PosNextShell");
 

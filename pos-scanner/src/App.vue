@@ -213,7 +213,7 @@ async function retryConnection() {
 			<div v-if="!started" class="gate">
 				<h1>Камера + штрихкоды + OCR</h1>
 				<p>
-					Прототип для A03–A05: zxing-wasm (1D/2D) и tesseract.js (SKU##### в
+					Прототип для A03–A05: zxing-wasm (1D/2D) и tesseract.js (SKU/NSU/SRV##### в
 					прицеле). Поиск товаров — mock-каталог.
 				</p>
 				<p v-if="settings.serverUrl" class="gate-meta mono">
@@ -264,7 +264,16 @@ async function retryConnection() {
 				<span v-if="scanner.engineInfo.value">
 					{{ scanner.engineInfo.value.native ? "native+zxing" : "zxing" }}
 				</span>
+				<span :data-ocr="scanner.ocrReady.value ? 'ok' : 'bad'">
+					{{ scanner.ocrReady.value ? "OCR ok" : "OCR…" }}
+				</span>
 			</div>
+			<p
+				v-if="started && scanner.lastError.value"
+				class="scan-err"
+			>
+				{{ scanner.lastError.value }}
+			</p>
 		</main>
 
 		<footer class="bar" v-if="started">
@@ -330,7 +339,7 @@ async function retryConnection() {
 				<h2>Движки и демо-каталог</h2>
 				<ul>
 					<li>1D/2D: <code>zxing-wasm</code> (+ native BarcodeDetector если доступен)</li>
-					<li>OCR: <code>tesseract.js</code>, только область прицела, маска <code>SKU#####</code></li>
+					<li>OCR: <code>tesseract.js</code>, только область прицела, маски <code>SKU#####</code> / <code>NSU#####</code> / <code>SRV#####</code></li>
 					<li>Штрихкод имеет приоритет над OCR</li>
 					<li>Несколько совпадений → ручной выбор</li>
 				</ul>
@@ -492,6 +501,25 @@ async function retryConnection() {
 	padding: 0.2rem 0.45rem;
 	border-radius: 999px;
 	backdrop-filter: blur(6px);
+}
+
+.hud span[data-ocr="bad"] {
+	color: var(--warn);
+}
+
+.scan-err {
+	position: absolute;
+	left: 0.75rem;
+	right: 0.75rem;
+	bottom: 0.75rem;
+	z-index: 2;
+	margin: 0;
+	padding: 0.45rem 0.65rem;
+	border-radius: 10px;
+	background: rgba(80, 20, 20, 0.82);
+	color: #fecaca;
+	font-size: 0.78rem;
+	line-height: 1.35;
 }
 
 .bar {
