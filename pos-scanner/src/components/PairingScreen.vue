@@ -3,7 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { prepareBarcodeEngine, decodeBarcodes } from "@/lib/barcode.js";
 import { t } from "@/lib/i18n.js";
 import { redeemPairingFromQr } from "@/lib/pairing.js";
-import { useCamera } from "@/composables/useCamera.js";
+import { CAMERA_BLACK_POSTER, useCamera } from "@/composables/useCamera.js";
 
 const emit = defineEmits(["paired", "settings", "back"]);
 
@@ -124,7 +124,15 @@ function tryAgain() {
 		</header>
 
 		<div class="pair__stage">
-			<video ref="videoRef" class="preview" playsinline muted autoplay />
+			<video
+				ref="videoRef"
+				class="preview"
+				:class="{ 'preview--live': camera.ready.value }"
+				playsinline
+				muted
+				autoplay
+				:poster="CAMERA_BLACK_POSTER"
+			/>
 			<div class="frame" aria-hidden="true" />
 			<p class="hud">
 				{{
@@ -191,6 +199,14 @@ h1 {
 	width: 100%;
 	height: 100%;
 	object-fit: cover;
+	background: #000;
+	opacity: 0;
+	visibility: hidden;
+}
+
+.preview--live {
+	opacity: 1;
+	visibility: visible;
 }
 
 .frame {

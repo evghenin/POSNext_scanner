@@ -151,6 +151,11 @@ function onPairAgainFromWork() {
 	// Cart persists in localStorage; reconnect without clearing it.
 	phase.value = "pair";
 }
+
+function onDisconnectedFromWork() {
+	pairingSession.value = null;
+	phase.value = "connected";
+}
 </script>
 
 <template>
@@ -210,7 +215,7 @@ function onPairAgainFromWork() {
 				:pairing="pairingSession"
 				@pair-again="onPairAgainFromWork"
 				@settings="openSettings"
-				@exit="backToConnected"
+				@disconnected="onDisconnectedFromWork"
 			/>
 
 			<section v-else-if="phase === 'boot' || phase === 'settings'" class="gate boot">

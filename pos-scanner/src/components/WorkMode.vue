@@ -5,7 +5,7 @@ import ItemAddCard from "@/components/ItemAddCard.vue";
 import ManualKeypad from "@/components/ManualKeypad.vue";
 import MatchPicker from "@/components/MatchPicker.vue";
 import Reticle from "@/components/Reticle.vue";
-import { useCamera } from "@/composables/useCamera.js";
+import { CAMERA_BLACK_POSTER, useCamera } from "@/composables/useCamera.js";
 import { useScanner } from "@/composables/useScanner.js";
 import {
 	addToCart,
@@ -15,12 +15,14 @@ import {
 } from "@/lib/cart.js";
 import { sendCartToTill } from "@/lib/cartSend.js";
 import { feedback } from "@/lib/feedback.js";
+import { LOOKUP_ITEM_METHOD } from "@/lib/itemLookup.js";
 import { t } from "@/lib/i18n.js";
+import { disconnectSelf } from "@/lib/pairing.js";
 
 defineProps({
 	pairing: { type: Object, default: null },
 });
-const emit = defineEmits(["pair-again", "settings", "exit"]);
+const emit = defineEmits(["pair-again", "settings", "disconnected"]);
 
 const videoRef = ref(null);
 const camera = useCamera();
@@ -29,12 +31,12 @@ const cart = ref(loadCart());
 const banner = ref("");
 const sending = ref(false);
 const manualMode = ref(false);
+const disconnecting = ref(false);
 
 const statusHint = computed(() => {
 	if (scanner.lookingUp.value) return t("lookingUp");
-	if (scanner.ocrBusy.value) return t("pairRedeeming");
-	if (scanner.ocrStatus.value === "ready") return t("ocrReadyHint");
-	return scanner.ocrStatusText.value;
+	if (scanner.ocrBusy.value) return t("lookingUp");
+	return "";
 });
 
 onMounted(async () => {
@@ -52,6 +54,10 @@ watch(
 		if (!err) return;
 		if (err === "item_missing") banner.value = t("itemMissing");
 		else if (err === "item_no_price") banner.value = t("itemNoPrice");
+		else if (err === "not_for_sale") banner.value = t("itemNotForSale");
+		else if (err === "lookup_api_missing") {
+			banner.value = t("lookupApiMissing", { method: LOOKUP_ITEM_METHOD });
+		} else if (err === "not_connected") banner.value = t("pairAgainKeepCart");
 		else banner.value = String(err);
 		scanner.lastError.value = null;
 	}
@@ -155,13 +161,37 @@ async function onSend() {
 async function toggleTorch() {
 	await camera.toggleTorch();
 }
+
+async function onDisconnect() {
+	if (disconnecting.value) return;
+	if (typeof window !== "undefined" && !window.confirm(t("confirmDisconnect"))) return;
+	disconnecting.value = true;
+	banner.value = t("disconnecting");
+	teardownCamera();
+	try {
+		await disconnectSelf();
+	} catch (e) {
+		console.warn("[work] disconnect", e?.message || e);
+	} finally {
+		disconnecting.value = false;
+		emit("disconnected");
+	}
+}
 </script>
 
 <template>
 	<section class="work" :class="{ 'work--manual': manualMode }">
 		<div class="scanner">
 			<template v-if="!manualMode">
-				<video ref="videoRef" class="preview" playsinline muted autoplay />
+				<video
+					ref="videoRef"
+					class="preview"
+					:class="{ 'preview--live': camera.ready.value }"
+					playsinline
+					muted
+					autoplay
+					:poster="CAMERA_BLACK_POSTER"
+				/>
 				<Reticle v-if="camera.ready.value" />
 				<div class="scanner__bar">
 					<button
@@ -174,16 +204,16 @@ async function toggleTorch() {
 					</button>
 					<button type="button" class="manual" @click="openManual">{{ t("manual") }}</button>
 					<button
-						v-if="camera.torchSupported.value"
 						type="button"
 						class="torch"
+						:disabled="!camera.torchSupported.value"
 						:aria-pressed="camera.torchOn.value"
 						@click="toggleTorch"
 					>
 						{{ camera.torchOn.value ? t("torchOn") : t("torch") }}
 					</button>
 				</div>
-				<p class="hud">{{ statusHint }}</p>
+				<p v-if="statusHint" class="hud">{{ statusHint }}</p>
 			</template>
 			<ManualKeypad v-else @select="onManualSelect" @close="backFromManual" />
 		</div>
@@ -219,7 +249,14 @@ async function toggleTorch() {
 
 		<footer class="foot">
 			<button type="button" class="ghost" @click="emit('settings')">{{ t("settings") }}</button>
-			<button type="button" class="ghost" @click="emit('exit')">{{ t("backToConnected") }}</button>
+			<button
+				type="button"
+				class="ghost"
+				:disabled="disconnecting"
+				@click="onDisconnect"
+			>
+				{{ t("disconnect") }}
+			</button>
 		</footer>
 	</section>
 </template>
@@ -247,6 +284,15 @@ async function toggleTorch() {
 	width: 100%;
 	height: 100%;
 	object-fit: cover;
+	background: #000;
+	/* Hide empty <video> chrome (Android WebView broken-file icon) until live. */
+	opacity: 0;
+	visibility: hidden;
+}
+
+.preview--live {
+	opacity: 1;
+	visibility: visible;
 }
 
 .scanner__bar {
@@ -254,7 +300,8 @@ async function toggleTorch() {
 	left: 0.55rem;
 	right: 0.55rem;
 	bottom: 0.55rem;
-	display: flex;
+	display: grid;
+	grid-template-columns: 1fr 1fr 1fr;
 	gap: 0.4rem;
 	z-index: 3;
 }
@@ -262,11 +309,13 @@ async function toggleTorch() {
 .capture,
 .manual,
 .torch {
+	width: 100%;
 	border: 0;
 	border-radius: 999px;
-	padding: 0.7rem 0.95rem;
+	padding: 0.7rem 0.35rem;
 	font-weight: 700;
-	font-size: 0.9rem;
+	font-size: 0.85rem;
+	min-width: 0;
 }
 
 .capture {
@@ -281,7 +330,8 @@ async function toggleTorch() {
 	border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-.capture:disabled {
+.capture:disabled,
+.torch:disabled {
 	opacity: 0.55;
 }
 
@@ -320,7 +370,9 @@ async function toggleTorch() {
 .foot {
 	display: flex;
 	gap: 0.5rem;
-	padding: 0.45rem 0.75rem max(0.45rem, env(safe-area-inset-bottom));
+	align-items: center;
+	min-height: 3.25rem;
+	padding: 0.55rem 0.75rem max(0.55rem, env(safe-area-inset-bottom));
 	border-top: 1px solid var(--border);
 	background: var(--bg-elevated);
 }
@@ -331,6 +383,10 @@ async function toggleTorch() {
 	background: transparent;
 	color: var(--muted);
 	font-weight: 600;
-	padding: 0.55rem;
+	padding: 0.65rem;
+}
+
+.ghost:disabled {
+	opacity: 0.55;
 }
 </style>

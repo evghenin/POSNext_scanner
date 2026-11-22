@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { lookupItem } from "@/lib/itemLookup.js";
+import { LOOKUP_ITEM_METHOD, lookupItem } from "@/lib/itemLookup.js";
 import {
 	MANUAL_PREFIXES,
 	backspaceManualDigit,
@@ -84,6 +84,11 @@ function onTapCode() {
 const statusText = computed(() => {
 	if (looking.value) return t("lookingUp");
 	if (found.value) return t("manualFoundTap");
+	if (lookup.value?.error === "lookup_api_missing") {
+		return t("lookupApiMissing", { method: LOOKUP_ITEM_METHOD });
+	}
+	if (lookup.value?.error === "not_connected") return t("pairAgainKeepCart");
+	if (lookup.value?.error === "not_for_sale") return t("itemNotForSale");
 	if (lookup.value && !lookup.value.found) return t("itemMissing");
 	if (lookup.value?.item && (lookup.value.item.rate == null || !Number.isFinite(Number(lookup.value.item.rate)))) {
 		return t("itemNoPrice");
