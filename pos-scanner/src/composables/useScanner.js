@@ -2,7 +2,7 @@ import { computed, onBeforeUnmount, ref, shallowRef } from "vue";
 import { decodeBarcodes, getBarcodeEngineInfo, prepareBarcodeEngine } from "@/lib/barcode.js";
 import { createDedupe } from "@/lib/dedupe.js";
 import { feedback } from "@/lib/feedback.js";
-import { lookupItem } from "@/lib/mockCatalog.js";
+import { lookupItem } from "@/lib/itemLookup.js";
 import { isTransientFrameError } from "@/lib/framePixels.js";
 import {
 	getLastOcrError,
@@ -42,9 +42,10 @@ export function useScanner(camera) {
 	let raf = 0;
 	let busy = false;
 	let lastFrameAt = 0;
-	let ocrEvery = 0;
-	const BARCODE_INTERVAL_MS = 180;
-	const OCR_EVERY_N_PASSES = 4; // OCR is heavier — throttle
+	let lastOcrAt = 0;
+	const BARCODE_INTERVAL_MS = 120;
+	/** Min gap between OCR attempts when barcode miss (barcode path never waits on OCR). */
+	const OCR_INTERVAL_MS = 450;
 
 	const unsubOcr = subscribeOcrStatus((payload) => {
 		ocrStatus.value = payload.status;
@@ -167,50 +168,47 @@ export function useScanner(camera) {
 					})),
 				};
 				feedback("recognized");
-			} else {
-				// No barcode → OCR on a slightly taller reticle (throttled)
-				ocrEvery = (ocrEvery + 1) % OCR_EVERY_N_PASSES;
-				if (ocrEvery === 0) {
-					if (!ocrReady.value) {
-						// Retry warm if earlier path load failed
-						prepareOcrEngine()
-							.then(() => {
-								ocrReady.value = true;
-								if (lastError.value?.startsWith("OCR")) lastError.value = null;
-							})
-							.catch((e) => {
-								lastError.value = `OCR ошибка: ${e?.message || getLastOcrError() || e}`;
-							});
-					} else {
-						const ocrFrame =
-							typeof camera.captureOcrReticle === "function"
-								? camera.captureOcrReticle(cropCanvas)
-								: frame;
-						const ocr = await recognizeSkuInRegion((ocrFrame || frame).canvas);
-						lastDecodeMs.value = ocr.durationMs;
-						if (ocr.codes.length === 1) {
-							await emitRecognition({
-								value: ocr.codes[0],
+			} else if (ts - lastOcrAt >= OCR_INTERVAL_MS) {
+				// No barcode → OCR only (never run OCR after a barcode hit).
+				lastOcrAt = ts;
+				if (!ocrReady.value) {
+					prepareOcrEngine()
+						.then(() => {
+							ocrReady.value = true;
+							if (lastError.value?.startsWith("OCR")) lastError.value = null;
+						})
+						.catch((e) => {
+							lastError.value = `OCR ошибка: ${e?.message || getLastOcrError() || e}`;
+						});
+				} else {
+					const ocrFrame =
+						typeof camera.captureOcrReticle === "function"
+							? camera.captureOcrReticle(cropCanvas)
+							: frame;
+					const ocr = await recognizeSkuInRegion((ocrFrame || frame).canvas);
+					lastDecodeMs.value = ocr.durationMs;
+					if (ocr.codes.length === 1) {
+						await emitRecognition({
+							value: ocr.codes[0],
+							format: "OCR SKU",
+							source: "ocr",
+							engine: "tesseract",
+							rawText: ocr.rawText,
+							durationMs: ocr.durationMs,
+						});
+					} else if (ocr.codes.length > 1) {
+						pauseForUi();
+						pendingChoice.value = {
+							kind: "ocr",
+							source: "ocr",
+							candidates: ocr.codes.map((code) => ({
+								value: code,
 								format: "OCR SKU",
-								source: "ocr",
 								engine: "tesseract",
-								rawText: ocr.rawText,
-								durationMs: ocr.durationMs,
-							});
-						} else if (ocr.codes.length > 1) {
-							pauseForUi();
-							pendingChoice.value = {
-								kind: "ocr",
-								source: "ocr",
-								candidates: ocr.codes.map((code) => ({
-									value: code,
-									format: "OCR SKU",
-									engine: "tesseract",
-								})),
-								rawText: ocr.rawText,
-							};
-							feedback("recognized");
-						}
+							})),
+							rawText: ocr.rawText,
+						};
+						feedback("recognized");
 					}
 				}
 			}

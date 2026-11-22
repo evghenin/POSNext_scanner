@@ -24,20 +24,22 @@ describe("settings", () => {
 			workMode: "accumulate",
 			soundEnabled: false,
 		});
-		expect(s.version).toBe(2);
+		expect(s.version).toBe(3);
 		expect(s.serverUrl).toBe("https://a.example");
 		expect(s.workMode).toBe("accumulate");
 		expect(s.soundEnabled).toBe(false);
 		expect(s.scannerPath).toBe("/pos-scanner");
 	});
 
-	it("clears bundled UI origins from serverUrl", () => {
+	it("replaces bundled UI origins / example.com with live ERP default", () => {
 		const s = migrateSettings({
 			version: 1,
 			serverUrl: "https://appassets.androidplatform.net",
 		});
-		expect(s.serverUrl).toBe("");
+		expect(s.serverUrl).toBe("https://erp.hotel-life.md");
 		expect(isBundledUiOrigin("https://appassets.androidplatform.net")).toBe(true);
+		const demo = migrateSettings({ version: 2, serverUrl: "https://example.com" });
+		expect(demo.serverUrl).toBe("https://erp.hotel-life.md");
 	});
 
 	it("builds page and API URLs", () => {

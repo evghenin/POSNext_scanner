@@ -8,7 +8,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * JS bridge for the demo WebView shell. Lets the PWA / bootstrap change
+ * JS bridge for the WebView shell. Lets the PWA / bootstrap change
  * API server URL without rebuilding the APK. Offline builds keep the Vue UI
  * in assets — server URL is API-only (never a remote /pos-scanner load).
  */

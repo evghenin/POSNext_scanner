@@ -7,7 +7,6 @@ import ResultCard from "@/components/ResultCard.vue";
 import Reticle from "@/components/Reticle.vue";
 import SettingsPanel from "@/components/SettingsPanel.vue";
 import { probeScannerEndpoint } from "@/lib/connectionProbe.js";
-import { listMockItems } from "@/lib/mockCatalog.js";
 import { WORK_MODE_LABELS, loadSettings, saveSettings } from "@/lib/settings.js";
 import {
 	isAndroidDemoShell,
@@ -49,9 +48,7 @@ onMounted(async () => {
 	await scanner.warmEngines();
 	// Offline APK: OCR works without server; nudge settings only as a reminder.
 	// Never probe /pos-scanner or block on API from the local UI.
-	if (!settings.value.serverUrl || settings.value.serverUrl.includes("example.com")) {
-		if (isAndroidDemoShell() || offlineUi) showSettings.value = true;
-	} else if (!offlineUi && !isAndroidDemoShell()) {
+	if (!offlineUi && !isAndroidDemoShell() && settings.value.serverUrl) {
 		await runConnectionProbe({ blockCamera: false });
 	}
 });
@@ -198,7 +195,7 @@ async function retryConnection() {
 		<header class="top">
 			<div>
 				<p class="brand">POSNext Scanner</p>
-				<p class="sub">{{ modeLabel }} · демо без кассы</p>
+				<p class="sub">{{ modeLabel }} · {{ settings.serverUrl || "API" }}</p>
 			</div>
 			<div class="top__actions">
 				<button
@@ -231,10 +228,10 @@ async function retryConnection() {
 			<Reticle v-if="started && camera.ready.value" />
 
 			<div v-if="!started" class="gate">
-				<h1>Камера + штрихкоды + OCR</h1>
+				<h1>Сканер POSNext</h1>
 				<p>
-					Прототип для A03–A05: zxing-wasm (1D/2D) и tesseract.js (SKU/NSU/SRV##### в
-					прицеле). Поиск товаров — mock-каталог.
+					Штрихкоды (1D/2D) и OCR печатных кодов SKU / NSU / SRV. API:
+					ERPNext / POSNext на живом сервере.
 				</p>
 				<p v-if="settings.serverUrl" class="gate-meta mono">
 					{{ offlineUi ? `API: ${settings.serverUrl}` : `${settings.serverUrl}${settings.scannerPath}` }}
@@ -389,18 +386,13 @@ async function retryConnection() {
 
 		<aside v-if="showHelp" class="help" @click.self="showHelp = false">
 			<div class="help__panel">
-				<h2>Движки и демо-каталог</h2>
+				<h2>Сканер</h2>
 				<ul>
 					<li>1D/2D: <code>zxing-wasm</code> (+ native BarcodeDetector если доступен)</li>
-					<li>OCR: <code>tesseract.js</code>, только область прицела, маски <code>SKU#####</code> / <code>NSU#####</code> / <code>SRV#####</code></li>
+					<li>OCR: <code>tesseract.js</code>, область прицела, маски <code>SKU#####</code> / <code>NSU#####</code> / <code>SRV#####</code></li>
 					<li>Штрихкод имеет приоритет над OCR</li>
 					<li>Несколько совпадений → ручной выбор</li>
-				</ul>
-				<h3>Mock items</h3>
-				<ul class="mono">
-					<li v-for="item in listMockItems()" :key="item.item_code">
-						{{ item.item_code }} · {{ item.barcode }}
-					</li>
+					<li>Товары ищутся на сервере API; pairing / корзина — следующий этап</li>
 				</ul>
 				<button type="button" class="cta" @click="showHelp = false">Закрыть</button>
 			</div>

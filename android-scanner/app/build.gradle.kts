@@ -6,8 +6,8 @@ plugins {
 
 val scannerHost: String =
 	(findProperty("scanner.host") as String?)?.trimEnd('/')
-		?: "https://example.com"
-// Optional hosted PWA path — used only by the TWA flavor. Demo offline APK ignores this.
+		?: "https://erp.hotel-life.md"
+// Optional hosted PWA path — used only by the TWA flavor. Offline WebView APK ignores this.
 val scannerPath: String =
 	(findProperty("scanner.path") as String?)?.let { if (it.startsWith("/")) it else "/$it" }
 		?: ""
@@ -30,13 +30,12 @@ android {
 		applicationId = "me.brainwise.posnext.scanner"
 		minSdk = 26
 		targetSdk = 35
-		versionCode = 8
-		versionName = "0.2.3"
+		versionCode = 9
+		versionName = "0.3.0"
 		buildConfigField("String", "SCANNER_URL", "\"$scannerUrl\"")
 		buildConfigField("String", "SCANNER_ORIGIN", "\"$scannerOrigin\"")
 		manifestPlaceholders["scannerUrl"] = scannerUrl
 		manifestPlaceholders["scannerHost"] = scannerHost.removePrefix("https://").removePrefix("http://")
-		// App-side Digital Asset Links statement (website must publish matching assetlinks.json)
 		val assetStatements =
 			"""[{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"web","site":"$scannerOrigin"}}]"""
 		resValue("string", "asset_statements", assetStatements)
@@ -44,16 +43,28 @@ android {
 
 	flavorDimensions += "shell"
 	productFlavors {
+		create("prod") {
+			dimension = "shell"
+			// No applicationId / versionName suffixes — production sideload package id.
+			buildConfigField("boolean", "USE_TWA", "false")
+			buildConfigField("boolean", "IS_PRODUCTION", "true")
+		}
 		create("demo") {
 			dimension = "shell"
 			applicationIdSuffix = ".demo"
 			versionNameSuffix = "-demo"
 			buildConfigField("boolean", "USE_TWA", "false")
+			buildConfigField("boolean", "IS_PRODUCTION", "false")
 		}
 		create("twa") {
 			dimension = "shell"
 			buildConfigField("boolean", "USE_TWA", "true")
+			buildConfigField("boolean", "IS_PRODUCTION", "false")
 		}
+	}
+
+	signingConfigs {
+		getByName("debug")
 	}
 
 	buildTypes {
@@ -63,6 +74,8 @@ android {
 				getDefaultProguardFile("proguard-android-optimize.txt"),
 				"proguard-rules.pro",
 			)
+			// Sideload until a store upload keystore is wired via local.properties / CI.
+			signingConfig = signingConfigs.getByName("debug")
 		}
 		debug {
 			applicationIdSuffix = ".debug"
@@ -92,7 +105,6 @@ dependencies {
 	implementation("androidx.webkit:webkit:1.12.1")
 	implementation("com.google.androidbrowserhelper:androidbrowserhelper:2.5.0")
 
-	// Align Kotlin stdlib pulled transitively by browserhelper / AndroidX
 	implementation(platform("org.jetbrains.kotlin:kotlin-bom:1.9.25"))
 	constraints {
 		implementation("org.jetbrains.kotlin:kotlin-stdlib") {

@@ -7,7 +7,10 @@
  */
 
 export const SETTINGS_KEY = "posnext.scanner.settings";
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 3;
+
+/** Production ERPNext / POSNext API origin (Hotel Life). */
+export const DEFAULT_API_ORIGIN = "https://erp.hotel-life.md";
 
 /** @typedef {"immediate" | "accumulate"} WorkMode */
 /** @typedef {"ru" | "en" | "ro"} LanguageCode */
@@ -43,7 +46,7 @@ export function isBundledUiOrigin(origin) {
 
 /** @returns {ScannerSettings} */
 export function defaultSettings() {
-	let origin = "";
+	let origin = DEFAULT_API_ORIGIN;
 	if (typeof window !== "undefined" && window.location?.origin) {
 		const loc = window.location.origin;
 		if (!isBundledUiOrigin(loc)) origin = loc;
@@ -71,8 +74,12 @@ export function migrateSettings(raw) {
 	const version = typeof o.version === "number" ? o.version : 0;
 
 	const serverUrl = normalizeServerUrl(String(o.serverUrl ?? o.siteUrl ?? base.serverUrl));
-	const cleanedServer =
+	let cleanedServer =
 		serverUrl && isBundledUiOrigin(serverUrl) ? "" : serverUrl || base.serverUrl;
+	// Drop legacy demo placeholders so production defaults to the live ERP.
+	if (!cleanedServer || cleanedServer.includes("example.com")) {
+		cleanedServer = DEFAULT_API_ORIGIN;
+	}
 
 	if (version < 1) {
 		return {

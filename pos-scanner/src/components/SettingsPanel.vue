@@ -87,7 +87,7 @@ function onSave() {
 				(pairing / корзина), не для загрузки страницы сканера.
 			</p>
 			<p v-else-if="inApk" class="hint apk">
-				APK demo: смена URL сервера сохранится в приложении без пересборки.
+				APK: смена URL сервера сохранится в приложении без пересборки.
 			</p>
 			<p v-else class="hint">
 				URL сервера — origin ERPNext/POSNext для API. Хостинг
@@ -102,7 +102,7 @@ function onSave() {
 					type="url"
 					inputmode="url"
 					autocomplete="url"
-					placeholder="https://pos.example.com"
+					placeholder="https://erp.hotel-life.md"
 				/>
 			</label>
 

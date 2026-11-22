@@ -21,8 +21,8 @@ const emit = defineEmits(["add", "dismiss"]);
 					· {{ Number(result.lookup.item.rate).toFixed(2) }}</span
 				>
 			</p>
-			<p v-if="result.lookup.item.unknown" class="warn">
-				Демо-каталог не знает этот код — проверка распознавания всё равно успешна.
+			<p v-if="result.lookup.item.pending" class="warn">
+				Код распознан. Карточка товара с кассы появится после pairing.
 			</p>
 		</template>
 		<div class="actions">
@@ -32,9 +32,9 @@ const emit = defineEmits(["add", "dismiss"]);
 				class="primary"
 				@click="emit('add')"
 			>
-				Добавить (демо)
+				Подтвердить
 			</button>
-			<p v-else class="ok">Добавлено локально · без отправки на кассу</p>
+			<p v-else class="ok">Подтверждено · отправка в корзину POS — следующий этап</p>
 			<button type="button" class="ghost" @click="emit('dismiss')">
 				{{ result.added ? "Сканировать дальше" : "Отмена" }}
 			</button>
