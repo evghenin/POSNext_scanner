@@ -2,12 +2,16 @@
 import { computed, reactive, ref, watch } from "vue";
 import {
 	WORK_MODE_LABELS,
-	buildScannerPageUrl,
+	buildApiOrigin,
 	loadSettings,
 	saveSettings,
 	validateSettingsPatch,
 } from "@/lib/settings.js";
-import { applyNativeServerConfig, isAndroidDemoShell } from "@/lib/shellBridge.js";
+import {
+	applyNativeServerConfig,
+	isAndroidDemoShell,
+	isOfflineBundledUi,
+} from "@/lib/shellBridge.js";
 
 const props = defineProps({
 	modelValue: { type: Boolean, default: false },
@@ -18,10 +22,9 @@ const draft = reactive({ ...loadSettings() });
 const error = ref("");
 const savedMsg = ref("");
 const inApk = isAndroidDemoShell();
+const offlineUi = isOfflineBundledUi();
 
-const pageUrlPreview = computed(() =>
-	buildScannerPageUrl({ serverUrl: draft.serverUrl, scannerPath: draft.scannerPath })
-);
+const apiPreview = computed(() => buildApiOrigin({ serverUrl: draft.serverUrl }));
 
 watch(
 	() => props.modelValue,
@@ -50,29 +53,22 @@ function onSave() {
 	Object.assign(draft, next);
 	emit("saved", next);
 
-	const target = buildScannerPageUrl(next);
-	const originChanged =
-		typeof window !== "undefined" &&
-		next.serverUrl &&
-		window.location.origin !== next.serverUrl;
-
-	if (inApk && target) {
+	if (inApk || offlineUi) {
 		const applied = applyNativeServerConfig(next.serverUrl, next.scannerPath);
 		if (applied) {
-			savedMsg.value = "Сохранено — проверка сервера и перезагрузка…";
+			savedMsg.value = offlineUi
+				? "Сохранено — URL только для API; интерфейс остаётся в приложении."
+				: "Сохранено — проверка сервера…";
 			return;
 		}
-		error.value =
-			"Мост приложения не ответил. Закройте настройки и нажмите «Открыть сканер» на стартовом экране, либо переустановите APK.";
-		return;
+		if (inApk) {
+			error.value =
+				"Мост приложения не ответил. Закройте настройки и переустановите APK при необходимости.";
+			return;
+		}
 	}
 
-	if (originChanged && !inApk) {
-		savedMsg.value =
-			"Сохранено в браузере. Для смены сайта в TWA нужен другой host при сборке APK + Asset Links.";
-	} else {
-		savedMsg.value = "Сохранено";
-	}
+	savedMsg.value = "Сохранено";
 }
 </script>
 
@@ -84,16 +80,21 @@ function onSave() {
 				<button type="button" class="ghost" @click="close">Закрыть</button>
 			</header>
 
-			<p v-if="inApk" class="hint apk">
-				APK demo: смена URL сервера перезагрузит встроенный WebView без пересборки.
+			<p v-if="offlineUi" class="hint apk">
+				APK: UI, OCR и WASM уже внутри приложения. URL сервера нужен только для API
+				(pairing / корзина), не для загрузки страницы сканера.
+			</p>
+			<p v-else-if="inApk" class="hint apk">
+				APK demo: смена URL сервера сохранится в приложении без пересборки.
 			</p>
 			<p v-else class="hint">
-				TWA / браузер: URL сохраняется локально для будущих API. Смена origin в TWA требует
-				сборки с новым host и Digital Asset Links.
+				URL сервера — origin ERPNext/POSNext для API. Хостинг
+				<code>/pos-scanner</code> на сайте опционален (браузер); телефонный APK его не
+				требует.
 			</p>
 
 			<label class="field">
-				<span>URL сервера (HTTPS)</span>
+				<span>URL сервера API (HTTPS)</span>
 				<input
 					v-model="draft.serverUrl"
 					type="url"
@@ -103,12 +104,12 @@ function onSave() {
 				/>
 			</label>
 
-			<label class="field">
-				<span>Путь сканера</span>
+			<label v-if="!offlineUi" class="field">
+				<span>Путь сканера (опциональный host PWA)</span>
 				<input v-model="draft.scannerPath" type="text" placeholder="/pos-scanner" />
 			</label>
 
-			<p v-if="pageUrlPreview" class="preview mono">{{ pageUrlPreview }}</p>
+			<p v-if="apiPreview" class="preview mono">API: {{ apiPreview }}</p>
 
 			<fieldset class="field">
 				<legend>Режим работы</legend>

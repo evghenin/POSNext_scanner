@@ -14,15 +14,13 @@ import java.net.UnknownHostException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.CertPathValidatorException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Locale;
 import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLHandshakeException;
 
 /**
- * Native HTTP probe for the configured scanner route. Runs off the UI thread.
- * Treats Frappe soft-404 HTML ("Здесь ничего нет") as not_found even on HTTP 200.
+ * Native HTTP probe for the configured ERPNext/POSNext API origin.
+ * Does not require /pos-scanner — offline APK hosts the UI locally.
  */
 public final class ScannerProbe {
 	public static final int TIMEOUT_MS = 10000;
@@ -44,65 +42,33 @@ public final class ScannerProbe {
 
 	private ScannerProbe() {}
 
+	/** Probe Frappe ping on the API origin (pairing/cart host). */
 	@NonNull
-	public static Result probe(@NonNull String origin, @NonNull String path) {
-		String base = origin.replaceAll("/+$", "") + (path.startsWith("/") ? path : "/" + path);
-		base = base.replaceAll("/+$", "");
-		List<String> candidates = new ArrayList<>();
-		candidates.add(base);
-		candidates.add(base + "/");
+	public static Result probeApi(@NonNull String origin) {
+		String base = origin.replaceAll("/+$", "");
+		if (base.isEmpty()) {
+			return new Result(false, "invalid_url", null, "");
+		}
+		String ping = base + "/api/method/frappe.ping";
 		try {
-			URL u = new URL(base);
-			String root = u.getProtocol() + "://" + u.getAuthority();
-			candidates.add(root + "/assets/pos_next/pos_scanner/manifest.webmanifest");
-			candidates.add(root + "/assets/pos_next/pos_scanner/index.html");
+			new URL(ping);
 		} catch (MalformedURLException ignored) {
-			return new Result(false, "invalid_url", null, base);
+			return new Result(false, "invalid_url", null, ping);
 		}
-
-		boolean sawNotFound = false;
-		boolean sawServerError = false;
-		Integer lastStatus = null;
-		Result firstTransport = null;
-
-		for (int i = 0; i < candidates.size(); i++) {
-			String candidate = candidates.get(i);
-			Result one = probeOne(candidate);
-			if (one.ok) {
-				return new Result(true, "ok", one.status, base);
-			}
-			if ("not_found".equals(one.kind)) {
-				sawNotFound = true;
-				lastStatus = one.status;
-				continue;
-			}
-			if ("server_error".equals(one.kind)) {
-				sawServerError = true;
-				lastStatus = one.status;
-				continue;
-			}
-			if (i == 0) {
-				firstTransport = one;
-			}
+		Result one = request(ping, "GET", true);
+		if (one.ok) {
+			return new Result(true, "ok", one.status, ping);
 		}
-
-		if (sawNotFound) {
-			return new Result(false, "not_found", lastStatus, base);
-		}
-		if (sawServerError) {
-			return new Result(false, "server_error", lastStatus, base);
-		}
-		if (firstTransport != null) {
-			return new Result(false, firstTransport.kind, firstTransport.status, base);
-		}
-		return new Result(false, "unknown", lastStatus, base);
+		return new Result(false, one.kind, one.status, ping);
 	}
 
+	/**
+	 * @deprecated Offline APK no longer loads remote /pos-scanner. Prefer {@link #probeApi}.
+	 */
+	@Deprecated
 	@NonNull
-	private static Result probeOne(@NonNull String url) {
-		// Always GET + body peek: HEAD cannot detect Frappe soft-404 HTML
-		// served with HTTP 200, and many hosts reject HEAD with 405.
-		return request(url, "GET", true);
+	public static Result probe(@NonNull String origin, @NonNull String path) {
+		return probeApi(origin);
 	}
 
 	@NonNull
@@ -112,8 +78,18 @@ public final class ScannerProbe {
 			conn = open(url, method);
 			int code = conn.getResponseCode();
 			if (code >= 200 && code < 400) {
-				if (peekBody && looksLikeFrappeNotFound(peekBody(conn))) {
-					return new Result(false, "not_found", code, url);
+				if (peekBody) {
+					String body = peekBody(conn);
+					if (looksLikeFrappeNotFound(body)) {
+						return new Result(false, "not_found", code, url);
+					}
+					String lower = body.toLowerCase(Locale.ROOT);
+					if (!body.isEmpty()
+							&& !lower.contains("pong")
+							&& !lower.contains("\"message\"")
+							&& looksLikeHtmlError(body)) {
+						return new Result(false, "not_found", code, url);
+					}
 				}
 				return new Result(true, "ok", code, url);
 			}
@@ -135,8 +111,8 @@ public final class ScannerProbe {
 		} catch (ProtocolException e) {
 			throw e;
 		}
-		conn.setRequestProperty("Accept", "text/html,application/json,*/*");
-		conn.setRequestProperty("User-Agent", "POSNextScannerAPK/0.1");
+		conn.setRequestProperty("Accept", "application/json,text/html,*/*");
+		conn.setRequestProperty("User-Agent", "POSNextScannerAPK/" + BuildConfig.VERSION_NAME);
 		conn.connect();
 		return conn;
 	}
@@ -156,7 +132,8 @@ public final class ScannerProbe {
 			byte[] tmp = new byte[1024];
 			int total = 0;
 			int n;
-			while (total < BODY_PEEK_BYTES && (n = in.read(tmp, 0, Math.min(tmp.length, BODY_PEEK_BYTES - total))) > 0) {
+			while (total < BODY_PEEK_BYTES
+					&& (n = in.read(tmp, 0, Math.min(tmp.length, BODY_PEEK_BYTES - total))) > 0) {
 				buf.write(tmp, 0, n);
 				total += n;
 			}
@@ -191,6 +168,11 @@ public final class ScannerProbe {
 		return missing && (frappe || body.contains("Здесь ничего нет"));
 	}
 
+	private static boolean looksLikeHtmlError(@NonNull String body) {
+		String lower = body.toLowerCase(Locale.ROOT);
+		return lower.contains("<html") && !lower.contains("pong");
+	}
+
 	private static Result mapStatus(int code, String url) {
 		if (code >= 200 && code < 400) {
 			return new Result(true, "ok", code, url);
@@ -199,7 +181,6 @@ public final class ScannerProbe {
 			return new Result(false, "not_found", code, url);
 		}
 		if (code == 405 || code == 501) {
-			// Method not allowed — caller may retry GET
 			return new Result(false, "unknown", code, url);
 		}
 		if (code >= 500) {

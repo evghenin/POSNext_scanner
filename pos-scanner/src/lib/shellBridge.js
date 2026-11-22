@@ -1,11 +1,21 @@
 /**
  * Optional bridge to the Android demo WebView shell (POSNextScannerAPK).
+ * Offline APK loads the Vue UI from WebViewAssetLoader (appassets…/www/).
  * TWA / mobile Safari / desktop: no-ops.
  */
+
+import { isBundledUiOrigin } from "./settings.js";
 
 export function isAndroidDemoShell() {
 	if (typeof navigator === "undefined") return false;
 	return /POSNextScannerAPK/i.test(navigator.userAgent || "");
+}
+
+/** True when the scanner UI is served from APK assets (not remote /pos-scanner). */
+export function isOfflineBundledUi() {
+	if (isAndroidDemoShell()) return true;
+	if (typeof window === "undefined") return false;
+	return isBundledUiOrigin(window.location?.origin || "");
 }
 
 function native() {
@@ -14,7 +24,7 @@ function native() {
 }
 
 /**
- * @returns {{ serverUrl: string, scannerPath: string } | null}
+ * @returns {{ serverUrl: string, scannerPath: string, offlineBundle?: boolean } | null}
  */
 export function readNativeServerConfig() {
 	const bridge = native();
@@ -25,6 +35,7 @@ export function readNativeServerConfig() {
 		return {
 			serverUrl: String(parsed.serverUrl || ""),
 			scannerPath: String(parsed.scannerPath || "/pos-scanner"),
+			offlineBundle: Boolean(parsed.offlineBundle),
 		};
 	} catch {
 		return null;
@@ -32,7 +43,7 @@ export function readNativeServerConfig() {
 }
 
 /**
- * Persist host/path in the APK and navigate the WebView to the new scanner URL.
+ * Persist API host in the APK. Offline shell keeps the local UI loaded.
  * @param {string} serverUrl
  * @param {string} scannerPath
  * @returns {boolean} true if the native shell accepted the request

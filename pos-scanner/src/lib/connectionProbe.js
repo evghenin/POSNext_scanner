@@ -1,9 +1,16 @@
 /**
- * Probe configured server + scanner path before treating the site as ready.
- * Used by the Vue gate and (via docs) mirrored by the Android shell.
+ * Probe ERPNext/POSNext reachability.
+ *
+ * Offline APK: probe Frappe API (`frappe.ping`) — UI/OCR is local.
+ * Optional hosted PWA: can still probe `/pos-scanner` via probeScannerEndpoint.
  */
 
-import { buildScannerPageUrl, normalizeScannerPath, normalizeServerUrl } from "./settings.js";
+import {
+	buildApiOrigin,
+	buildScannerPageUrl,
+	normalizeScannerPath,
+	normalizeServerUrl,
+} from "./settings.js";
 
 /** @typedef {"ok" | "offline" | "timeout" | "tls" | "dns" | "not_found" | "server_error" | "invalid_url" | "unknown"} ProbeKind */
 
@@ -24,19 +31,27 @@ const TIMEOUT_MS = 12000;
  * @param {ProbeKind} kind
  * @param {string} url
  * @param {number | null} [status]
+ * @param {"api" | "scanner"} [mode]
  * @returns {ProbeResult}
  */
-export function probeMessage(kind, url, status = null) {
+export function probeMessage(kind, url, status = null, mode = "scanner") {
+	const apiMode = mode === "api";
 	const base = {
 		ok: false,
 		kind,
 		status,
 		url,
-		steps: [
-			"Проверьте URL сервера и путь сканера в настройках",
-			"Убедитесь, что сайт открывается по HTTPS",
-			"Проверьте сеть (Wi‑Fi / мобильный интернет)",
-		],
+		steps: apiMode
+			? [
+					"Проверьте URL сервера (API) в настройках",
+					"Убедитесь, что сайт открывается по HTTPS",
+					"Проверьте сеть (Wi‑Fi / мобильный интернет)",
+				]
+			: [
+					"Проверьте URL сервера и путь сканера в настройках",
+					"Убедитесь, что сайт открывается по HTTPS",
+					"Проверьте сеть (Wi‑Fi / мобильный интернет)",
+				],
 	};
 
 	switch (kind) {
@@ -45,7 +60,9 @@ export function probeMessage(kind, url, status = null) {
 				ok: true,
 				kind: "ok",
 				title: "Сервер доступен",
-				description: "Маршрут сканера отвечает.",
+				description: apiMode
+					? "API ERPNext/POSNext отвечает (frappe.ping)."
+					: "Маршрут сканера отвечает.",
 				steps: [],
 				status,
 				url,
@@ -54,15 +71,22 @@ export function probeMessage(kind, url, status = null) {
 			return {
 				...base,
 				kind: "not_found",
-				title: "На сервере нет приложения сканера",
-				description:
-					"Сервер отвечает, но маршрут сканера не найден (часто это страница «Здесь ничего нет» от ERPNext). Нужно установить обновление POSNext с маршрутом /pos-scanner и собрать фронтенд сканера.",
-				steps: [
-					"Установите/обновите приложение POSNext на сайте (bench get-app / migrate)",
-					"Соберите и опубликуйте pos-scanner (npm run build → assets /pos-scanner)",
-					"Проверьте в браузере: открывается ли https://ваш-сайт/pos-scanner",
-					"Затем нажмите «Повторить» в приложении",
-				],
+				title: apiMode ? "API не найден" : "На сервере нет приложения сканера",
+				description: apiMode
+					? "Сервер отвечает, но /api/method/frappe.ping недоступен. Проверьте, что это сайт ERPNext/Frappe."
+					: "Сервер отвечает, но маршрут сканера не найден (часто это страница «Здесь ничего нет» от ERPNext). Для APK UI уже встроен — нужен только API. Хостинг /pos-scanner опционален.",
+				steps: apiMode
+					? [
+							"Откройте в браузере: https://ваш-сайт/api/method/frappe.ping",
+							"Должен вернуться JSON с message: pong",
+							"Затем нажмите «Повторить» в приложении",
+						]
+					: [
+							"Для телефона используйте APK со встроенным UI (OCR/WASM внутри)",
+							"На сервере достаточно pairing/cart API POSNext",
+							"Опционально: опубликуйте /pos-scanner для браузера",
+							"Затем нажмите «Повторить» в приложении",
+						],
 			};
 		case "offline":
 			return {
@@ -125,13 +149,43 @@ export function probeMessage(kind, url, status = null) {
 				...base,
 				kind: "unknown",
 				title: "Не удалось подключиться",
-				description: "Проверка сервера сканера завершилась с ошибкой.",
+				description: apiMode
+					? "Проверка API сервера завершилась с ошибкой."
+					: "Проверка сервера сканера завершилась с ошибкой.",
 				steps: base.steps,
 			};
 	}
 }
 
 /**
+ * Probe Frappe API origin (pairing/cart). Used by offline APK.
+ * @param {{ serverUrl: string }} cfg
+ * @param {{ fetchImpl?: typeof fetch, timeoutMs?: number }} [opts]
+ * @returns {Promise<ProbeResult>}
+ */
+export async function probeApiEndpoint(cfg, opts = {}) {
+	const origin = buildApiOrigin(cfg);
+	const url = origin ? `${origin}/api/method/frappe.ping` : "";
+
+	if (!url) {
+		return probeMessage("invalid_url", "", null, "api");
+	}
+
+	if (typeof navigator !== "undefined" && navigator.onLine === false) {
+		return probeMessage("offline", url, null, "api");
+	}
+
+	const fetchImpl = opts.fetchImpl || fetch;
+	const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
+	const result = await probeOne(fetchImpl, url, timeoutMs, { expectPing: true });
+	if (result.ok) {
+		return probeMessage("ok", url, result.status, "api");
+	}
+	return probeMessage(result.kind, url, result.status, "api");
+}
+
+/**
+ * Probe optional hosted `/pos-scanner` (browser / legacy). Not required for APK OCR.
  * @param {{ serverUrl: string, scannerPath?: string }} cfg
  * @param {{ fetchImpl?: typeof fetch, timeoutMs?: number }} [opts]
  * @returns {Promise<ProbeResult>}
@@ -154,7 +208,6 @@ export async function probeScannerEndpoint(cfg, opts = {}) {
 
 	/** @type {string[]} */
 	const candidates = [url, url.endsWith("/") ? url.slice(0, -1) : `${url}/`];
-	// Known built asset when PWA is published under Frappe
 	try {
 		const u = new URL(url);
 		candidates.push(`${u.origin}/assets/pos_next/pos_scanner/manifest.webmanifest`);
@@ -170,7 +223,6 @@ export async function probeScannerEndpoint(cfg, opts = {}) {
 	for (const candidate of candidates) {
 		const result = await probeOne(fetchImpl, candidate, timeoutMs);
 		if (result.ok) {
-			// Manifest/asset ok is enough; primary path 200 is ideal
 			return probeMessage("ok", url, result.status);
 		}
 		if (result.kind === "not_found") {
@@ -183,7 +235,6 @@ export async function probeScannerEndpoint(cfg, opts = {}) {
 			lastStatus = result.status;
 			continue;
 		}
-		// Hard transport errors on first candidate are definitive
 		if (candidate === candidates[0]) {
 			return probeMessage(result.kind, url, result.status);
 		}
@@ -194,11 +245,6 @@ export async function probeScannerEndpoint(cfg, opts = {}) {
 	return probeMessage("unknown", url, lastStatus);
 }
 
-/**
- * @param {typeof fetch} fetchImpl
- * @param {string} url
- * @param {number} timeoutMs
- */
 /**
  * Detect ERPNext/Frappe soft-404 HTML served with HTTP 200.
  * @param {string} body
@@ -218,11 +264,16 @@ export function looksLikeFrappeNotFound(body) {
 	return missing && (frappe || body.includes("Здесь ничего нет"));
 }
 
-async function probeOne(fetchImpl, url, timeoutMs) {
+/**
+ * @param {typeof fetch} fetchImpl
+ * @param {string} url
+ * @param {number} timeoutMs
+ * @param {{ expectPing?: boolean }} [opts]
+ */
+async function probeOne(fetchImpl, url, timeoutMs, opts = {}) {
 	const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
 	const timer = setTimeout(() => ctrl?.abort(), timeoutMs);
 	try {
-		// Prefer GET so we can peek for Frappe soft-404 HTML (HEAD often 405 or empty).
 		let res;
 		try {
 			res = await fetchImpl(url, {
@@ -230,10 +281,9 @@ async function probeOne(fetchImpl, url, timeoutMs) {
 				redirect: "follow",
 				cache: "no-store",
 				signal: ctrl?.signal,
-				headers: { Accept: "text/html,application/json,*/*" },
+				headers: { Accept: "application/json,text/html,*/*" },
 			});
 		} catch (firstErr) {
-			// Fallback HEAD if GET blocked oddly
 			try {
 				res = await fetchImpl(url, {
 					method: "HEAD",
@@ -253,6 +303,15 @@ async function probeOne(fetchImpl, url, timeoutMs) {
 					const body = await res.text();
 					if (looksLikeFrappeNotFound(body)) {
 						return { ok: false, kind: /** @type {const} */ ("not_found"), status };
+					}
+					if (opts.expectPing) {
+						const lower = body.toLowerCase();
+						if (!lower.includes("pong") && !lower.includes('"message"')) {
+							// CORS may empty body; HTTP 200 on ping route is still a good sign
+							if (body.trim() && !lower.includes("frappe") && !lower.includes("{")) {
+								return { ok: false, kind: /** @type {const} */ ("not_found"), status };
+							}
+						}
 					}
 				}
 			} catch {
@@ -282,10 +341,11 @@ async function probeOne(fetchImpl, url, timeoutMs) {
 			msg.includes("dns") ||
 			msg.includes("name not resolved")
 		) {
-			// Browsers often blur DNS vs offline
 			if (typeof navigator !== "undefined" && navigator.onLine === false) {
 				return { ok: false, kind: /** @type {const} */ ("offline"), status: null };
 			}
+			// Cross-origin from APK asset origin often surfaces as failed to fetch (CORS).
+			// Callers that need a definitive API check should use the native shell probe.
 			return { ok: false, kind: /** @type {const} */ ("dns"), status: null };
 		}
 		return { ok: false, kind: /** @type {const} */ ("unknown"), status: null };

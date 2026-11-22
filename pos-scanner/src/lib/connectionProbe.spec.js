@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	looksLikeFrappeNotFound,
+	probeApiEndpoint,
 	probeMessage,
 	probeScannerEndpoint,
 } from "./connectionProbe.js";
@@ -16,6 +17,11 @@ describe("connectionProbe", () => {
 		const r = probeMessage("not_found", "https://a.example/pos-scanner", 404);
 		expect(r.title).toMatch(/нет приложения сканера/i);
 		expect(r.steps.length).toBeGreaterThan(1);
+	});
+
+	it("maps api not_found differently", () => {
+		const r = probeMessage("not_found", "https://a.example/api/method/frappe.ping", 404, "api");
+		expect(r.title).toMatch(/API/i);
 	});
 
 	it("detects Frappe soft-404 HTML", () => {
@@ -71,5 +77,22 @@ describe("connectionProbe", () => {
 		);
 		expect(r.ok).toBe(true);
 		expect(r.kind).toBe("ok");
+	});
+
+	it("probeApiEndpoint hits frappe.ping", async () => {
+		/** @type {string[]} */
+		const urls = [];
+		const fetchImpl = async (url) => {
+			urls.push(String(url));
+			return /** @type {any} */ ({
+				status: 200,
+				ok: true,
+				text: async () => '{"message":"pong"}',
+			});
+		};
+		const r = await probeApiEndpoint({ serverUrl: "https://shop.example" }, { fetchImpl });
+		expect(r.ok).toBe(true);
+		expect(urls[0]).toBe("https://shop.example/api/method/frappe.ping");
+		expect(r.description).toMatch(/API/i);
 	});
 });

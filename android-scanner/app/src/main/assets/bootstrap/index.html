@@ -3,7 +3,7 @@
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-		<title>POSNext Scanner — настройка</title>
+		<title>POSNext Scanner — настройка API</title>
 		<style>
 			:root {
 				color-scheme: dark;
@@ -75,21 +75,18 @@
 	<body>
 		<h1>POSNext Scanner</h1>
 		<p>
-			Укажите HTTPS-сайт ERPNext/POSNext, где опубликован маршрут
-			<code>/pos-scanner</code>. Настройка сохранится в приложении — пересборка APK не нужна.
+			Интерфейс сканера, OCR и WASM уже внутри APK. Укажите HTTPS-сайт ERPNext/POSNext
+			<strong>только для API</strong> (pairing / корзина). Маршрут
+			<code>/pos-scanner</code> на сервере не требуется.
 		</p>
 		<label>
-			URL сервера
+			URL сервера API
 			<input id="serverUrl" type="url" placeholder="https://pos.example.com" autocomplete="url" />
-		</label>
-		<label>
-			Путь сканера
-			<input id="scannerPath" type="text" value="/pos-scanner" />
 		</label>
 		<p id="preview" class="mono"></p>
 		<p id="error" class="err" hidden></p>
 		<p id="status" class="status" hidden></p>
-		<button type="button" id="go">Открыть сканер</button>
+		<button type="button" id="go">Сохранить и открыть сканер</button>
 		<script>
 			function normalizeOrigin(raw) {
 				var t = (raw || "").trim().replace(/\/+$/, "");
@@ -98,26 +95,21 @@
 				try {
 					var u = new URL(t);
 					if (u.protocol !== "https:" && u.protocol !== "http:") return "";
+					if (u.hostname === "appassets.androidplatform.net") return "";
 					return u.protocol + "//" + u.host;
 				} catch (e) {
 					return "";
 				}
 			}
-			function normalizePath(raw) {
-				var p = (raw || "/pos-scanner").trim() || "/pos-scanner";
-				if (p.charAt(0) !== "/") p = "/" + p;
-				return p.replace(/\/+$/, "") || "/pos-scanner";
-			}
 			function refreshPreview() {
 				var o = normalizeOrigin(document.getElementById("serverUrl").value);
-				var p = normalizePath(document.getElementById("scannerPath").value);
-				document.getElementById("preview").textContent = o ? o + p : "";
+				document.getElementById("preview").textContent = o ? "API: " + o : "";
 			}
 			function setBusy(busy, msg) {
 				var btn = document.getElementById("go");
 				var status = document.getElementById("status");
 				btn.disabled = !!busy;
-				btn.textContent = busy ? "Проверка сервера…" : "Открыть сканер";
+				btn.textContent = busy ? "Проверка API…" : "Сохранить и открыть сканер";
 				if (msg) {
 					status.hidden = false;
 					status.textContent = msg;
@@ -127,12 +119,10 @@
 				}
 			}
 			document.getElementById("serverUrl").addEventListener("input", refreshPreview);
-			document.getElementById("scannerPath").addEventListener("input", refreshPreview);
 			try {
 				if (window.PosNextShell && window.PosNextShell.getServerConfigJson) {
 					var cfg = JSON.parse(window.PosNextShell.getServerConfigJson() || "{}");
 					if (cfg.serverUrl) document.getElementById("serverUrl").value = cfg.serverUrl;
-					if (cfg.scannerPath) document.getElementById("scannerPath").value = cfg.scannerPath;
 				}
 			} catch (e) {}
 			refreshPreview();
@@ -140,33 +130,30 @@
 				var err = document.getElementById("error");
 				err.hidden = true;
 				var origin = normalizeOrigin(document.getElementById("serverUrl").value);
-				var path = normalizePath(document.getElementById("scannerPath").value);
 				if (!origin) {
-					err.textContent = "Укажите корректный URL (https://…)";
+					err.textContent = "Укажите корректный URL API (https://…)";
 					err.hidden = false;
 					return;
 				}
 				if (!(window.PosNextShell && window.PosNextShell.applyServerConfig)) {
 					err.textContent =
-						"Мост приложения недоступен. Переустановите APK или откройте страницу внутри POSNext Scanner.";
+						"Мост приложения недоступен. Переустановите APK.";
 					err.hidden = false;
 					return;
 				}
-				setBusy(true, "Проверяем " + origin + path + "…");
+				setBusy(true, "Сохраняем " + origin + "…");
 				try {
-					window.PosNextShell.applyServerConfig(origin, path);
-					// Native shell should navigate to loading/error/remote.
-					// If nothing happens within 20s, surface a visible error.
+					window.PosNextShell.applyServerConfig(origin, "/pos-scanner");
 					setTimeout(function () {
 						if (document.getElementById("go").disabled) {
 							err.textContent =
-								"Нет ответа от приложения. Проверьте сеть и нажмите ещё раз, либо переустановите APK.";
+								"Нет ответа от приложения. Нажмите ещё раз или переустановите APK.";
 							err.hidden = false;
 							setBusy(false);
 						}
 					}, 20000);
 				} catch (e) {
-					err.textContent = "Ошибка запуска: " + (e && e.message ? e.message : e);
+					err.textContent = "Ошибка: " + (e && e.message ? e.message : e);
 					err.hidden = false;
 					setBusy(false);
 				}

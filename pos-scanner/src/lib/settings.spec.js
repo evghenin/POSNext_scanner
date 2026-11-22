@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+	buildApiOrigin,
 	buildScannerPageUrl,
 	defaultSettings,
+	isBundledUiOrigin,
 	migrateSettings,
 	normalizeScannerPath,
 	normalizeServerUrl,
@@ -16,27 +18,44 @@ describe("settings", () => {
 		expect(normalizeScannerPath("/pos-scanner/")).toBe("/pos-scanner");
 	});
 
-	it("migrates unversioned blobs to v1", () => {
+	it("migrates unversioned blobs to current version", () => {
 		const s = migrateSettings({
 			siteUrl: "https://a.example/",
 			workMode: "accumulate",
 			soundEnabled: false,
 		});
-		expect(s.version).toBe(1);
+		expect(s.version).toBe(2);
 		expect(s.serverUrl).toBe("https://a.example");
 		expect(s.workMode).toBe("accumulate");
 		expect(s.soundEnabled).toBe(false);
 		expect(s.scannerPath).toBe("/pos-scanner");
 	});
 
-	it("builds page URL", () => {
+	it("clears bundled UI origins from serverUrl", () => {
+		const s = migrateSettings({
+			version: 1,
+			serverUrl: "https://appassets.androidplatform.net",
+		});
+		expect(s.serverUrl).toBe("");
+		expect(isBundledUiOrigin("https://appassets.androidplatform.net")).toBe(true);
+	});
+
+	it("builds page and API URLs", () => {
 		expect(
 			buildScannerPageUrl({ serverUrl: "https://a.example", scannerPath: "/pos-scanner" })
 		).toBe("https://a.example/pos-scanner");
+		expect(buildApiOrigin({ serverUrl: "https://a.example/" })).toBe("https://a.example");
 	});
 
-	it("rejects invalid server URL", () => {
-		const r = validateSettingsPatch({ ...defaultSettings(), serverUrl: "not a url" });
-		expect(r.ok).toBe(false);
+	it("rejects invalid server URL and bundled origins", () => {
+		expect(validateSettingsPatch({ ...defaultSettings(), serverUrl: "not a url" }).ok).toBe(
+			false
+		);
+		expect(
+			validateSettingsPatch({
+				...defaultSettings(),
+				serverUrl: "https://appassets.androidplatform.net",
+			}).ok
+		).toBe(false);
 	});
 });

@@ -6,10 +6,14 @@ import MatchPicker from "@/components/MatchPicker.vue";
 import ResultCard from "@/components/ResultCard.vue";
 import Reticle from "@/components/Reticle.vue";
 import SettingsPanel from "@/components/SettingsPanel.vue";
-import { probeScannerEndpoint } from "@/lib/connectionProbe.js";
+import { probeApiEndpoint, probeScannerEndpoint } from "@/lib/connectionProbe.js";
 import { listMockItems } from "@/lib/mockCatalog.js";
 import { WORK_MODE_LABELS, loadSettings, saveSettings } from "@/lib/settings.js";
-import { isAndroidDemoShell, readNativeServerConfig } from "@/lib/shellBridge.js";
+import {
+	isAndroidDemoShell,
+	isOfflineBundledUi,
+	readNativeServerConfig,
+} from "@/lib/shellBridge.js";
 import { useCamera } from "@/composables/useCamera.js";
 import { useScanner } from "@/composables/useScanner.js";
 
@@ -37,17 +41,17 @@ const modeLabel = computed(
 	() => WORK_MODE_LABELS[settings.value.workMode] || WORK_MODE_LABELS.immediate
 );
 
-const needsServerHint = computed(() => !settings.value.serverUrl);
+const offlineUi = isOfflineBundledUi();
+const needsServerHint = computed(() => !offlineUi && !settings.value.serverUrl);
 
 onMounted(async () => {
 	syncFromNativeShell();
 	await scanner.warmEngines();
-	// First launch convenience: open settings if no server URL yet (e.g. blank APK host)
+	// Offline APK: OCR works without server; nudge settings only as a reminder.
 	if (!settings.value.serverUrl || settings.value.serverUrl.includes("example.com")) {
-		if (isAndroidDemoShell()) showSettings.value = true;
-	} else if (!isAndroidDemoShell()) {
-		// Browser / TWA: soft-check so missing /pos-scanner is explained in our UI
-		await runConnectionProbe();
+		if (isAndroidDemoShell() || offlineUi) showSettings.value = true;
+	} else if (!offlineUi && !isAndroidDemoShell()) {
+		await runConnectionProbe({ blockCamera: false });
 	}
 });
 
@@ -65,22 +69,37 @@ function syncFromNativeShell() {
 async function onSettingsSaved(next) {
 	settings.value = next;
 	connectionError.value = null;
+	if (offlineUi) {
+		// Soft API check — never unloads local UI
+		await runConnectionProbe({ blockCamera: false, soft: true });
+		return;
+	}
 	if (!isAndroidDemoShell()) {
-		await runConnectionProbe();
+		await runConnectionProbe({ blockCamera: false });
 	}
 }
 
-async function runConnectionProbe() {
-	if (!settings.value.serverUrl) return true;
+/**
+ * @param {{ blockCamera?: boolean, soft?: boolean }} [opts]
+ */
+async function runConnectionProbe(opts = {}) {
+	const blockCamera = opts.blockCamera !== false && !offlineUi;
+	const soft = Boolean(opts.soft) || offlineUi;
+	if (!settings.value.serverUrl) {
+		if (offlineUi) return true;
+		return !blockCamera;
+	}
 	probing.value = true;
 	try {
-		const result = await probeScannerEndpoint({
-			serverUrl: settings.value.serverUrl,
-			scannerPath: settings.value.scannerPath,
-		});
+		const result = offlineUi
+			? await probeApiEndpoint({ serverUrl: settings.value.serverUrl })
+			: await probeScannerEndpoint({
+					serverUrl: settings.value.serverUrl,
+					scannerPath: settings.value.scannerPath,
+				});
 		if (!result.ok) {
 			connectionError.value = result;
-			return false;
+			return soft ? true : false;
 		}
 		connectionError.value = null;
 		return true;
@@ -96,9 +115,9 @@ async function runConnectionProbe() {
 				"Нажмите «Повторить»",
 			],
 			status: null,
-			url: settings.value.serverUrl + settings.value.scannerPath,
+			url: settings.value.serverUrl + (offlineUi ? "/api/method/frappe.ping" : settings.value.scannerPath),
 		};
-		return false;
+		return soft ? true : false;
 	} finally {
 		probing.value = false;
 	}
@@ -107,8 +126,12 @@ async function runConnectionProbe() {
 async function begin() {
 	openingCamera.value = true;
 	try {
-		const ok = await runConnectionProbe();
-		if (!ok) return;
+		// Offline APK: never block camera/OCR on API probe (CORS/network soft-fail).
+		const ok = await runConnectionProbe({
+			blockCamera: !offlineUi,
+			soft: offlineUi,
+		});
+		if (!ok && !offlineUi) return;
 		await nextTick();
 		await camera.start(videoRef.value);
 		if (camera.ready.value) {
@@ -128,11 +151,13 @@ async function begin() {
 			description: e?.message || String(e),
 			steps: [
 				"Разрешите доступ к камере в системе",
-				"Проверьте HTTPS и URL сервера",
+				offlineUi
+					? "Перезапустите приложение и повторите"
+					: "Проверьте HTTPS и URL сервера",
 				"Повторите попытку",
 			],
 			status: null,
-			url: settings.value.serverUrl + settings.value.scannerPath,
+			url: settings.value.serverUrl || (offlineUi ? "local://www" : ""),
 		};
 	} finally {
 		openingCamera.value = false;
@@ -166,10 +191,7 @@ function closeSettings() {
 
 async function retryConnection() {
 	connectionError.value = null;
-	const ok = await runConnectionProbe();
-	if (ok && !started.value) {
-		/* stay on gate — user can open camera */
-	}
+	await runConnectionProbe({ blockCamera: false, soft: offlineUi });
 }
 </script>
 
@@ -217,7 +239,10 @@ async function retryConnection() {
 					прицеле). Поиск товаров — mock-каталог.
 				</p>
 				<p v-if="settings.serverUrl" class="gate-meta mono">
-					{{ settings.serverUrl }}{{ settings.scannerPath }}
+					{{ offlineUi ? `API: ${settings.serverUrl}` : `${settings.serverUrl}${settings.scannerPath}` }}
+				</p>
+				<p v-else-if="offlineUi" class="gate-meta">
+					OCR работает офлайн; URL сервера — только для API (pairing / корзина).
 				</p>
 				<p v-if="needsServerHint" class="warn">
 					Сначала укажите URL сервера в настройках.

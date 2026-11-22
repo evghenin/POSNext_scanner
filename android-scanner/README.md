@@ -1,93 +1,65 @@
 # POSNext Scanner — Android APK wrapper
 
-Sideloadable Android shell for the recognition PWA at **`/pos-scanner`**.
+Sideloadable Android shell with the **Vue scanner UI + OCR/WASM bundled inside the APK**.
 
-Decoding stays **inside the page** (zxing-wasm + tesseract). This APK does **not** call Barcode Scanner / ZXing Intent or any external scan app.
+Decoding stays **inside the page** (zxing-wasm + tesseract). Assets load via
+`WebViewAssetLoader` (`https://appassets.androidplatform.net/www/…`) — not from
+`/pos-scanner` on the ERP host. The in-app **server URL is API-only** (pairing / cart).
 
-## Why TWA (+ demo WebView)
+## Flavors
 
 | Flavor | Shell | When to use |
 |--------|--------|-------------|
-| **`twa`** | Chrome [Trusted Web Activity](https://developer.chrome.com/docs/android/trusted-web-activity) via `androidbrowserhelper` | Production: verified HTTPS host + Digital Asset Links → fullscreen Chrome, shared PWA cache/SW |
-| **`demo`** | In-app `WebView` + camera permission bridge | Sideload / CI debug **before** Asset Links exist — still fullscreen, same URL |
-
-Capacitor was not chosen: we do not need a second JS runtime or offline asset bundle yet; the PWA remains the source of truth.
+| **`demo`** | In-app `WebView` + camera bridge + offline assets | Sideload / day-to-day phone use |
+| **`twa`** | Chrome Trusted Web Activity | Optional production path if you still host a PWA + Asset Links |
 
 ## Package
 
 - Application id: `me.brainwise.posnext.scanner`
 - Demo debug id: `me.brainwise.posnext.scanner.demo.debug`
-- TWA debug id: `me.brainwise.posnext.scanner.debug`
+- Version: see `app/build.gradle.kts` (`0.2.0+`)
 
 ## Build debug APK
 
-Requirements: JDK 17+, Android SDK (API 35), network for Gradle deps.
+Requirements: JDK 17+, Android SDK (API 35), Node 20+ (to build `pos-scanner` assets).
 
 ```bash
-# one-time SDK (example paths — see docs/android-apk-wrapper.md)
-export ANDROID_HOME=$HOME/Android/Sdk
-export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools"
-
+export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 cd android-scanner
 
-# Point at your HTTPS ERPNext / POSNext site that serves /pos-scanner
-./gradlew :app:assembleDemoDebug \
-  -Pscanner.host=https://YOUR.SITE \
-  -Pscanner.path=/pos-scanner
-
-# APK:
-# app/build/outputs/apk/demo/debug/app-demo-debug.apk
-```
-
-Install:
-
-```bash
-adb install -r app/build/outputs/apk/demo/debug/app-demo-debug.apk
-```
-
-TWA flavor (needs Digital Asset Links on the host or Chrome shows a URL bar):
-
-```bash
-./gradlew :app:assembleTwaDebug -Pscanner.host=https://YOUR.SITE
-```
-
-### Helper script
-
-```bash
+# Builds Vue → assets/www, then assembles the APK
+# Optional arg: default API origin (overridable in settings)
 ./scripts/build-debug-apk.sh https://YOUR.SITE
+
+# or manually:
+cd ../pos-scanner && npm ci && npm run build:android
+cd ../android-scanner
+./gradlew :app:assembleDemoDebug -Pscanner.host=https://YOUR.SITE
 ```
 
-## Release signing (no Play secrets in repo)
+APK: `app/build/outputs/apk/demo/debug/app-demo-debug.apk`
 
-```bash
-# Generate a local upload key (keep outside git)
-keytool -genkeypair -v -keystore posnext-scanner-upload.jks -keyalg RSA -keysize 2048 -validity 10000 -alias posnext-scanner
+## What is bundled
 
-# app/build.gradle.kts: wire signingConfigs.release from env or local.properties
-# Then:
-./gradlew :app:assembleTwaRelease -Pscanner.host=https://YOUR.SITE
-```
+Under `app/src/main/assets/www/` (generated, not committed):
 
-Publish `/.well-known/assetlinks.json` from `digital-asset-links.template.json` with the **release** (and optionally debug) cert SHA-256.
+- Vue app (`index.html`, JS chunks)
+- `ocr/` — tesseract worker, LSTM wasm/js, `eng.traineddata.gz(.js)`
+- zxing WASM (via Vite chunk)
+- PWA manifest / icon
 
-Get fingerprint:
+## Server URL
 
-```bash
-keytool -list -v -keystore posnext-scanner-upload.jks -alias posnext-scanner
-# or for debug:
-keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android
-```
+SharedPreferences + `PosNextShell` store the ERPNext **API origin**. Saving it runs a
+native `frappe.ping` probe, then returns to the local UI. Camera/OCR work without a
+reachable server.
 
 ## Camera
 
-- Manifest: `CAMERA` (+ optional camera features not required)
-- Demo WebView: grants `PermissionRequest.RESOURCE_VIDEO_CAPTURE` after runtime permission
-- TWA: Chrome handles getUserMedia; site must be HTTPS
-
-## In-app server URL (demo)
-
-Demo APK persists `server_url` / `scanner_path` in SharedPreferences. First launch with placeholder host opens `assets/bootstrap/`. The PWA settings screen can call `PosNextShell.applyServerConfig` to reload. **TWA still needs a rebuild** for a new production host + Digital Asset Links.
+- Manifest: `CAMERA`
+- Demo WebView: grants `RESOURCE_VIDEO_CAPTURE` after runtime permission
+- Secure context: `appassets.androidplatform.net` (AssetLoader)
 
 ## iOS
 
-Out of scope (no App Store wrapper in this PR).
+Out of scope.
