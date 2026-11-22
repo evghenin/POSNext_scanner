@@ -1,0 +1,63 @@
+# Node / Vite (pos-scanner)
+node_modules/
+dist/
+dist-ssr/
+*.local
+.npm/
+.pnpm-store/
+.turbo/
+.vite/
+*.tsbuildinfo
+
+# Wasm / OCR caches
+*.wasm
+!**/public/**/*.wasm
+.tesseract/
+tessdata_cache/
+
+# Android / Gradle
+.gradle/
+**/build/
+!android-scanner/gradle/wrapper/
+local.properties
+*.iml
+.idea/
+.cxx/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+bin/
+gen/
+out/
+.externalNativeBuild/
+
+# Keep committed release APKs only under releases/
+!releases/
+!releases/*.apk
+!releases/*.aab
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.vscode/
+.cursor/
+
+# Logs / env
+*.log
+.env
+.env.*
+!.env.example
+
+# Python (frappe host helpers)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Bundles / temp
+*.bundle
