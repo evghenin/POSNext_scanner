@@ -248,7 +248,29 @@ async function retryConnection() {
 					</button>
 				</div>
 				<p v-if="camera.error.value" class="err">{{ camera.error.value }}</p>
-				<p v-if="scanner.lastError.value" class="err">{{ scanner.lastError.value }}</p>
+				<p
+					v-if="scanner.ocrStatus.value === 'loading'"
+					class="gate-meta"
+				>
+					{{ scanner.ocrStatusText.value }}
+				</p>
+				<p
+					v-else-if="scanner.ocrStatus.value === 'ready'"
+					class="gate-meta ok-ocr"
+				>
+					{{ scanner.ocrStatusText.value }}
+				</p>
+				<p
+					v-else-if="scanner.ocrStatus.value === 'error' || scanner.lastError.value"
+					class="err"
+					role="alert"
+				>
+					{{
+						scanner.ocrStatus.value === "error"
+							? scanner.ocrStatusText.value
+							: scanner.lastError.value
+					}}
+				</p>
 			</div>
 
 			<div v-else-if="camera.error.value" class="gate">
@@ -264,15 +286,23 @@ async function retryConnection() {
 				<span v-if="scanner.engineInfo.value">
 					{{ scanner.engineInfo.value.native ? "native+zxing" : "zxing" }}
 				</span>
-				<span :data-ocr="scanner.ocrReady.value ? 'ok' : 'bad'">
-					{{ scanner.ocrReady.value ? "OCR ok" : "OCR…" }}
+				<span
+					class="hud-ocr"
+					:data-ocr="scanner.ocrStatus.value"
+				>
+					{{ scanner.ocrStatusText.value }}
 				</span>
 			</div>
 			<p
-				v-if="started && scanner.lastError.value"
+				v-if="started && (scanner.ocrStatus.value === 'error' || scanner.lastError.value)"
 				class="scan-err"
+				role="alert"
 			>
-				{{ scanner.lastError.value }}
+				{{
+					scanner.ocrStatus.value === "error"
+						? scanner.ocrStatusText.value
+						: scanner.lastError.value
+				}}
 			</p>
 		</main>
 
@@ -443,6 +473,10 @@ async function retryConnection() {
 	line-height: 1.45;
 }
 
+.ok-ocr {
+	color: var(--ok);
+}
+
 .gate-meta {
 	font-size: 0.8rem;
 	color: var(--accent);
@@ -503,8 +537,17 @@ async function retryConnection() {
 	backdrop-filter: blur(6px);
 }
 
-.hud span[data-ocr="bad"] {
+.hud span.hud-ocr[data-ocr="loading"] {
 	color: var(--warn);
+}
+
+.hud span.hud-ocr[data-ocr="error"] {
+	color: var(--danger);
+	font-weight: 650;
+}
+
+.hud span.hud-ocr[data-ocr="ready"] {
+	color: var(--ok);
 }
 
 .scan-err {
@@ -514,12 +557,14 @@ async function retryConnection() {
 	bottom: 0.75rem;
 	z-index: 2;
 	margin: 0;
-	padding: 0.45rem 0.65rem;
+	padding: 0.55rem 0.75rem;
 	border-radius: 10px;
-	background: rgba(80, 20, 20, 0.82);
+	background: rgba(80, 20, 20, 0.9);
 	color: #fecaca;
-	font-size: 0.78rem;
+	font-size: 0.85rem;
+	font-weight: 600;
 	line-height: 1.35;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 .bar {

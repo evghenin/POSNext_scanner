@@ -1,7 +1,7 @@
 {
 	"name": "posnext-pos-scanner",
 	"private": true,
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"type": "module",
 	"description": "POSNext Mobile Scanner recognition prototype (camera 1D/2D + OCR SKU)",
 	"scripts": {
@@ -16,6 +16,7 @@
 		"test:ocr-fixtures": "vitest run src/lib/ocr.shelf.spec.js"
 	},
 	"dependencies": {
+		"idb-keyval": "^6.3.0",
 		"tesseract.js": "^5.1.1",
 		"vue": "^3.5.13",
 		"zxing-wasm": "^2.1.2"
