@@ -1,27 +1,33 @@
 /**
  * Versioned scanner settings (localStorage). Schema bumps migrate in place.
- * Cart/pairing stay out of scope — workMode is persisted for later wiring.
- *
- * In the offline APK shell, serverUrl is the Frappe/POSNext API origin only —
- * the scanner UI/OCR loads from bundled assets, not from /pos-scanner.
+ * Settings UI: ERP URL, language, theme only — no phone credentials.
  */
 
+import { normalizeI18nLanguage } from "./i18n.js";
+import { normalizeTheme } from "./theme.js";
+
 export const SETTINGS_KEY = "posnext.scanner.settings";
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 5;
+
+/** Production ERPNext / POSNext API origin (Hotel Life) — placeholder only until first save. */
+export const DEFAULT_API_ORIGIN = "https://erp.hotel-life.md";
 
 /** @typedef {"immediate" | "accumulate"} WorkMode */
-/** @typedef {"ru" | "en" | "ro"} LanguageCode */
+/** @typedef {"en" | "ro" | "ru"} LanguageCode */
+/** @typedef {"dark" | "light" | "system"} ThemeMode */
 
 /**
  * @typedef {object} ScannerSettings
  * @property {number} version
- * @property {string} serverUrl HTTPS origin, no trailing slash (e.g. https://pos.example.com)
- * @property {string} scannerPath path starting with / (default /pos-scanner); used only for optional hosted PWA
+ * @property {boolean} configured User completed at least one Save
+ * @property {string} serverUrl HTTPS origin, no trailing slash
+ * @property {string} scannerPath path starting with / (optional hosted PWA)
  * @property {WorkMode} workMode
  * @property {boolean} soundEnabled
  * @property {boolean} vibrateEnabled
  * @property {boolean} torchDefault
  * @property {LanguageCode} language
+ * @property {ThemeMode} theme
  */
 
 /** Origins that mean "UI is local", not an ERP API host. */
@@ -43,21 +49,35 @@ export function isBundledUiOrigin(origin) {
 
 /** @returns {ScannerSettings} */
 export function defaultSettings() {
-	let origin = "";
-	if (typeof window !== "undefined" && window.location?.origin) {
-		const loc = window.location.origin;
-		if (!isBundledUiOrigin(loc)) origin = loc;
-	}
 	return {
 		version: SETTINGS_VERSION,
-		serverUrl: origin,
+		configured: false,
+		serverUrl: "",
 		scannerPath: "/pos-scanner",
 		workMode: "immediate",
 		soundEnabled: true,
 		vibrateEnabled: true,
 		torchDefault: false,
-		language: "ru",
+		language: "en",
+		theme: "system",
 	};
+}
+
+/**
+ * True when the user has saved settings at least once (localStorage present + configured).
+ * @returns {boolean}
+ */
+export function hasSavedSettings() {
+	if (typeof localStorage === "undefined") return false;
+	try {
+		const raw = localStorage.getItem(SETTINGS_KEY);
+		if (!raw) return false;
+		const parsed = JSON.parse(raw);
+		const s = migrateSettings(parsed);
+		return Boolean(s.configured && s.serverUrl);
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -70,43 +90,34 @@ export function migrateSettings(raw) {
 	const o = /** @type {Record<string, unknown>} */ (raw);
 	const version = typeof o.version === "number" ? o.version : 0;
 
-	const serverUrl = normalizeServerUrl(String(o.serverUrl ?? o.siteUrl ?? base.serverUrl));
-	const cleanedServer =
-		serverUrl && isBundledUiOrigin(serverUrl) ? "" : serverUrl || base.serverUrl;
+	let serverUrl = normalizeServerUrl(String(o.serverUrl ?? o.siteUrl ?? ""));
+	if (serverUrl && isBundledUiOrigin(serverUrl)) serverUrl = "";
+	if (serverUrl && serverUrl.includes("example.com")) serverUrl = "";
 
-	if (version < 1) {
-		return {
-			...base,
-			serverUrl: cleanedServer,
-			scannerPath: normalizeScannerPath(String(o.scannerPath ?? base.scannerPath)),
-			workMode: o.workMode === "accumulate" ? "accumulate" : "immediate",
-			soundEnabled: o.soundEnabled !== false,
-			vibrateEnabled: o.vibrateEnabled !== false,
-			torchDefault: Boolean(o.torchDefault),
-			language: normalizeLanguage(o.language),
-			version: SETTINGS_VERSION,
-		};
-	}
+	/** Pre-v4 installs that already had a real URL count as configured. */
+	const hadBlob = version > 0 || o.serverUrl != null || o.siteUrl != null;
+	const configured =
+		o.configured === true ||
+		(hadBlob && Boolean(serverUrl) && version > 0 && version < 4);
 
 	return {
 		...base,
-		...o,
-		serverUrl: cleanedServer,
+		serverUrl,
 		scannerPath: normalizeScannerPath(String(o.scannerPath ?? base.scannerPath)),
 		workMode: o.workMode === "accumulate" ? "accumulate" : "immediate",
 		soundEnabled: o.soundEnabled !== false,
 		vibrateEnabled: o.vibrateEnabled !== false,
 		torchDefault: Boolean(o.torchDefault),
 		language: normalizeLanguage(o.language),
+		theme: normalizeTheme(o.theme),
+		configured,
 		version: SETTINGS_VERSION,
 	};
 }
 
 /** @param {unknown} lang */
 export function normalizeLanguage(lang) {
-	const v = String(lang || "ru").toLowerCase();
-	if (v === "en" || v === "ro") return v;
-	return "ru";
+	return normalizeI18nLanguage(lang);
 }
 
 /** @param {string} url */
@@ -142,7 +153,7 @@ export function buildScannerPageUrl(s) {
 }
 
 /**
- * Frappe API origin used for pairing / cart methods.
+ * Frappe API origin used for connect / cart methods.
  * @param {Pick<ScannerSettings, "serverUrl">} s
  */
 export function buildApiOrigin(s) {
@@ -151,32 +162,36 @@ export function buildApiOrigin(s) {
 
 /**
  * @param {Partial<ScannerSettings>} patch
+ * @param {{ t?: (key: string) => string }} [opts]
  * @returns {{ ok: true, settings: ScannerSettings } | { ok: false, error: string }}
  */
-export function validateSettingsPatch(patch) {
+export function validateSettingsPatch(patch, opts = {}) {
+	const tr = opts.t || ((k) => k);
 	const next = migrateSettings({ ...defaultSettings(), ...patch, version: SETTINGS_VERSION });
-	if (patch.serverUrl != null && patch.serverUrl !== "") {
-		const normalized = normalizeServerUrl(String(patch.serverUrl));
-		if (!normalized) {
-			return { ok: false, error: "Укажите корректный URL сервера (https://…)" };
-		}
-		if (isBundledUiOrigin(normalized)) {
-			return {
-				ok: false,
-				error: "Укажите URL ERPNext/POSNext (API), не адрес встроенного UI.",
-			};
-		}
-		if (normalized.startsWith("http://") && !isLocalHttpAllowed(normalized)) {
-			return {
-				ok: false,
-				error: "Для продакшена нужен HTTPS. HTTP допустим только для localhost/LAN.",
-			};
-		}
-		next.serverUrl = normalized;
+
+	const rawUrl = patch.serverUrl != null ? String(patch.serverUrl) : next.serverUrl;
+	if (!String(rawUrl || "").trim()) {
+		return { ok: false, error: tr("requiredUrl") };
 	}
+	const normalized = normalizeServerUrl(String(rawUrl));
+	if (!normalized) {
+		return { ok: false, error: tr("invalidUrl") };
+	}
+	if (isBundledUiOrigin(normalized)) {
+		return { ok: false, error: tr("bundledUrlError") };
+	}
+	if (normalized.startsWith("http://") && !isLocalHttpAllowed(normalized)) {
+		return { ok: false, error: tr("httpProdError") };
+	}
+	next.serverUrl = normalized;
+
 	if (patch.scannerPath != null) {
 		next.scannerPath = normalizeScannerPath(String(patch.scannerPath));
 	}
+	if (patch.language != null) next.language = normalizeLanguage(patch.language);
+	if (patch.theme != null) next.theme = normalizeTheme(patch.theme);
+
+	next.configured = true;
 	return { ok: true, settings: next };
 }
 
@@ -212,7 +227,8 @@ export function loadSettings() {
  * @returns {ScannerSettings}
  */
 export function saveSettings(settings) {
-	const next = migrateSettings(settings);
+	const next = migrateSettings({ ...settings, configured: true });
+	next.configured = true;
 	if (typeof localStorage !== "undefined") {
 		localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
 	}
@@ -220,6 +236,6 @@ export function saveSettings(settings) {
 }
 
 export const WORK_MODE_LABELS = {
-	immediate: "Сразу в POSNext",
-	accumulate: "Накопление",
+	immediate: "Immediate",
+	accumulate: "Accumulate",
 };

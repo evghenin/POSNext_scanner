@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="$(cd "$ROOT/.." && pwd)"
-HOST="${1:-https://example.com}"
+HOST="${1:-https://erp.hotel-life.md}"
 
 if [[ -z "${ANDROID_HOME:-}${ANDROID_SDK_ROOT:-}" ]]; then
 	echo "Set ANDROID_HOME (or ANDROID_SDK_ROOT) to your Android SDK." >&2

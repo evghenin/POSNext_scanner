@@ -35,9 +35,13 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.webkit.WebViewAssetLoader;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Fullscreen WebView shell that loads the Vue scanner from APK assets
@@ -64,7 +68,6 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 	private WebView webView;
 	private WebViewAssetLoader assetLoader;
 	private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
-	private final AtomicInteger probeGeneration = new AtomicInteger(0);
 
 	@Nullable private PermissionRequest pendingWebPermission;
 	private final ActivityResultLauncher<String> cameraPermissionLauncher =
@@ -114,11 +117,13 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 					return insets;
 				});
 
+		// Path prefix /www/ must map to assets/www/… — stock AssetsPathHandler strips the
+		// prefix and opens from the assets root, which caused ERR_INVALID_RESPONSE on launch.
 		assetLoader =
 				new WebViewAssetLoader.Builder()
 						.setDomain(ASSET_DOMAIN)
 						.setHttpAllowed(false)
-						.addPathHandler("/www/", new WebViewAssetLoader.AssetsPathHandler(this))
+						.addPathHandler("/www/", new BundledWwwAssetsHandler(this))
 						.build();
 
 		WebSettings settings = webView.getSettings();
@@ -146,8 +151,13 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 						if (assetLoader != null && request != null && request.getUrl() != null) {
 							WebResourceResponse local =
 									assetLoader.shouldInterceptRequest(request.getUrl());
-							if (local != null) {
+							// Never return an empty intercept (null stream) — that is
+							// net::ERR_INVALID_RESPONSE in Chromium WebView.
+							if (local != null && local.getData() != null) {
 								return local;
+							}
+							if (local != null) {
+								Log.w(TAG, "AssetLoader empty response for " + request.getUrl());
 							}
 						}
 						return super.shouldInterceptRequest(view, request);
@@ -187,7 +197,21 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 							return;
 						}
 						String url = request.getUrl() != null ? request.getUrl().toString() : "";
-						if (isLocalAsset(url) || isBundledScannerUrl(url)) {
+						if (isLocalAsset(url)) {
+							return;
+						}
+						if (isBundledScannerUrl(url)) {
+							String desc =
+									error != null && error.getDescription() != null
+											? error.getDescription().toString()
+											: "unknown";
+							Log.e(TAG, "Bundled scanner failed to load: " + url + " (" + desc + ")");
+							loadLocal(BOOTSTRAP_URL);
+							Toast.makeText(
+											WebViewScannerActivity.this,
+											"Ошибка загрузки локального UI (" + desc + ")",
+											Toast.LENGTH_LONG)
+									.show();
 							return;
 						}
 						Log.w(TAG, "Ignoring remote load error on " + url);
@@ -275,15 +299,9 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 	@NonNull
 	@Override
 	public String getServerUrl() {
+		// Empty until the user saves settings (UX v2). Baked BuildConfig is only a UI placeholder.
 		String stored = prefs().getString(KEY_SERVER_URL, "");
-		if (stored != null && !stored.isEmpty()) {
-			return stored;
-		}
-		String baked = BuildConfig.SCANNER_ORIGIN;
-		if (baked.contains("example.com") || baked.isEmpty()) {
-			return "";
-		}
-		return baked;
+		return stored != null ? stored : "";
 	}
 
 	@NonNull
@@ -315,55 +333,124 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 					if (!isBundledScannerUrl(current) && !isLocalAsset(current)) {
 						openBundledScanner();
 					}
-					if (!origin.isEmpty()) {
-						softProbeApiInBackground(origin);
-					}
 				});
 	}
 
 	@Override
 	public void retryLastServer() {
-		runOnMain(
-				() -> {
-					openBundledScanner();
-					String origin = getServerUrl();
-					if (!origin.isEmpty() && !origin.contains("example.com")) {
-						softProbeApiInBackground(origin);
-					}
-				});
+		runOnMain(this::openBundledScanner);
 	}
 
-	/**
-	 * Background-only API reachability check. Never shows a loading screen or
-	 * blocks the local scanner UI (pairing/cart will need network later).
-	 */
-	private void softProbeApiInBackground(@NonNull String origin) {
-		final int gen = probeGeneration.incrementAndGet();
+	@Override
+	public void probeApi(@NonNull String serverUrl, @NonNull String callbackId) {
+		final String origin = normalizeOrigin(serverUrl.isEmpty() ? getServerUrl() : serverUrl);
+		final String cb = callbackId;
+		if (cb.isEmpty()) {
+			return;
+		}
 		probeExecutor.execute(
 				() -> {
 					ScannerProbe.Result result;
 					try {
-						result = ScannerProbe.probeApi(origin);
+						result =
+								origin.isEmpty()
+										? new ScannerProbe.Result(false, "invalid_url", null, "")
+										: ScannerProbe.probeApi(origin);
 					} catch (Throwable t) {
 						Log.e(TAG, "API probe crashed", t);
 						result = new ScannerProbe.Result(false, "unknown", null, origin);
 					}
-					final ScannerProbe.Result finalResult = result;
-					runOnMain(
-							() -> {
-								if (gen != probeGeneration.get()) {
-									return;
-								}
-								if (!finalResult.ok) {
-									Toast.makeText(
-													this,
-													"API недоступен ("
-															+ finalResult.kind
-															+ "). OCR работает офлайн.",
-													Toast.LENGTH_LONG)
-											.show();
-								}
-							});
+					deliverProbeResult(cb, result);
+				});
+	}
+
+	@Override
+	public void httpRequest(
+			@NonNull String method,
+			@NonNull String url,
+			@NonNull String body,
+			@NonNull String contentType,
+			@NonNull String headersJson,
+			@NonNull String callbackId) {
+		if (callbackId.isEmpty() || url.isEmpty()) {
+			return;
+		}
+		final String cb = callbackId;
+		probeExecutor.execute(
+				() -> {
+					JSONObject o = new JSONObject();
+					try {
+						NativeHttp.Response res =
+								NativeHttp.request(
+										method,
+										url,
+										body.isEmpty() ? null : body,
+										contentType.isEmpty() ? null : contentType,
+										headersJson.isEmpty() ? null : headersJson);
+						o.put("ok", res.status >= 200 && res.status < 400);
+						o.put("status", res.status);
+						o.put("body", res.body);
+						o.put("url", res.url);
+						if (res.csrfToken != null) {
+							o.put("csrfToken", res.csrfToken);
+						}
+					} catch (Throwable t) {
+						Log.e(TAG, "httpRequest failed", t);
+						try {
+							o.put("ok", false);
+							o.put("status", 0);
+							o.put("body", "");
+							o.put("error", String.valueOf(t.getMessage()));
+							o.put("url", url);
+						} catch (JSONException ignored) {
+							/* empty */
+						}
+					}
+					deliverJsCallback("__posNextHttpDone", cb, o.toString());
+				});
+	}
+
+	private void deliverProbeResult(@NonNull String callbackId, @NonNull ScannerProbe.Result result) {
+		JSONObject o = new JSONObject();
+		try {
+			o.put("ok", result.ok);
+			o.put("kind", result.kind);
+			if (result.status != null) {
+				o.put("status", result.status.intValue());
+			} else {
+				o.put("status", JSONObject.NULL);
+			}
+			o.put("url", result.url);
+		} catch (JSONException ignored) {
+			/* empty */
+		}
+		deliverJsCallback("__posNextProbeDone", callbackId, o.toString());
+	}
+
+	/** Deliver JSON to JS via base64 to avoid quote escaping issues. */
+	private void deliverJsCallback(
+			@NonNull String fnName, @NonNull String callbackId, @NonNull String json) {
+		final String idB64 =
+				Base64.getEncoder().encodeToString(callbackId.getBytes(StandardCharsets.UTF_8));
+		final String jsonB64 =
+				Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
+		runOnMain(
+				() -> {
+					if (webView == null) {
+						return;
+					}
+					webView.evaluateJavascript(
+							"(function(){try{var id=atob('"
+									+ idB64
+									+ "');var raw=atob('"
+									+ jsonB64
+									+ "');var data=JSON.parse(raw);"
+									+ "window."
+									+ fnName
+									+ "&&window."
+									+ fnName
+									+ "(id,data);}catch(e){console.error(e);}})()",
+							null);
 				});
 	}
 

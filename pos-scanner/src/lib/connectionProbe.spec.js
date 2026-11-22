@@ -13,13 +13,13 @@ describe("connectionProbe", () => {
 		expect(r.kind).toBe("invalid_url");
 	});
 
-	it("maps not_found message for missing scanner", () => {
+	it("maps not_found message via i18n", () => {
 		const r = probeMessage("not_found", "https://a.example/pos-scanner", 404);
-		expect(r.title).toMatch(/нет приложения сканера/i);
-		expect(r.steps.length).toBeGreaterThan(1);
+		expect(r.title).toMatch(/API not found/i);
+		expect(r.steps.length).toBeGreaterThan(0);
 	});
 
-	it("maps api not_found differently", () => {
+	it("maps api not_found", () => {
 		const r = probeMessage("not_found", "https://a.example/api/method/frappe.ping", 404, "api");
 		expect(r.title).toMatch(/API/i);
 	});
@@ -90,7 +90,10 @@ describe("connectionProbe", () => {
 				text: async () => '{"message":"pong"}',
 			});
 		};
-		const r = await probeApiEndpoint({ serverUrl: "https://shop.example" }, { fetchImpl });
+		const r = await probeApiEndpoint(
+			{ serverUrl: "https://shop.example" },
+			{ fetchImpl, preferNative: false }
+		);
 		expect(r.ok).toBe(true);
 		expect(urls[0]).toBe("https://shop.example/api/method/frappe.ping");
 		expect(r.description).toMatch(/API/i);

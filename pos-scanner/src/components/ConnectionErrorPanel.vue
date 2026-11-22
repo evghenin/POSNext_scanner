@@ -1,62 +1,65 @@
 <script setup>
+import { computed } from "vue";
+import { t } from "@/lib/i18n.js";
+
 defineProps({
 	result: { type: Object, required: true },
 });
-defineEmits(["settings", "retry", "dismiss"]);
+defineEmits(["settings", "retry"]);
+
+const labels = computed(() => ({
+	retry: t("retry"),
+	settings: t("openSettings"),
+}));
 </script>
 
 <template>
-	<aside class="conn" role="dialog" aria-modal="true" aria-labelledby="conn-title">
-		<div class="conn__panel">
-			<h2 id="conn-title">{{ result.title }}</h2>
-			<p class="desc">{{ result.description }}</p>
-			<p v-if="result.url" class="url mono">{{ result.url }}</p>
-			<ol v-if="result.steps?.length">
-				<li v-for="(step, i) in result.steps" :key="i">{{ step }}</li>
-			</ol>
-			<div class="actions">
-				<button type="button" class="primary" @click="$emit('retry')">Повторить</button>
-				<button type="button" class="secondary" @click="$emit('settings')">
-					Изменить настройки
-				</button>
-				<button type="button" class="ghost" @click="$emit('dismiss')">Закрыть</button>
-			</div>
+	<section class="gate" role="alert" aria-labelledby="conn-title">
+		<p class="brand">{{ t("appName") }}</p>
+		<h1 id="conn-title">{{ result.title || t("connectionError") }}</h1>
+		<p class="desc">{{ result.description }}</p>
+		<p v-if="result.url" class="url mono">{{ result.url }}</p>
+		<ol v-if="result.steps?.length">
+			<li v-for="(step, i) in result.steps" :key="i">{{ step }}</li>
+		</ol>
+		<div class="actions">
+			<button type="button" class="primary" @click="$emit('retry')">{{ labels.retry }}</button>
+			<button type="button" class="secondary" @click="$emit('settings')">
+				{{ labels.settings }}
+			</button>
 		</div>
-	</aside>
+	</section>
 </template>
 
 <style scoped>
-.conn {
-	position: absolute;
-	inset: 0;
-	z-index: 10;
-	background: rgba(0, 0, 0, 0.6);
+.gate {
+	height: 100%;
 	display: grid;
-	align-items: end;
+	align-content: center;
+	gap: 0.65rem;
+	padding: 1.5rem 1.25rem;
+	padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
 }
 
-.conn__panel {
-	background: var(--bg-elevated);
-	border-radius: 16px 16px 0 0;
-	padding: 1.15rem 1rem 1.4rem;
-	border-top: 1px solid rgba(255, 255, 255, 0.08);
-	max-height: 88vh;
-	overflow: auto;
+.brand {
+	margin: 0;
+	font-weight: 700;
+	letter-spacing: 0.02em;
 }
 
-h2 {
-	margin: 0 0 0.5rem;
-	font-size: 1.15rem;
+h1 {
+	margin: 0;
+	font-size: 1.35rem;
 }
 
 .desc {
-	margin: 0 0 0.65rem;
+	margin: 0;
 	color: var(--muted);
 	line-height: 1.45;
 }
 
 .url {
-	margin: 0 0 0.75rem;
+	margin: 0;
 	color: var(--accent);
 	font-size: 0.8rem;
 	word-break: break-all;
@@ -67,7 +70,7 @@ h2 {
 }
 
 ol {
-	margin: 0 0 1rem;
+	margin: 0;
 	padding-left: 1.2rem;
 	color: var(--muted);
 	line-height: 1.45;
@@ -76,6 +79,7 @@ ol {
 .actions {
 	display: grid;
 	gap: 0.5rem;
+	margin-top: 0.5rem;
 }
 
 button {
@@ -87,17 +91,12 @@ button {
 
 .primary {
 	background: var(--accent);
-	color: #04201b;
+	color: var(--accent-fg);
 }
 
 .secondary {
 	background: transparent;
 	color: var(--fg);
-	border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.ghost {
-	background: transparent;
-	color: var(--muted);
+	border: 1px solid var(--border);
 }
 </style>

@@ -124,9 +124,9 @@ export function useCamera() {
 		return { canvas, sx, sy, rw, rh, vw, vh };
 	}
 
-	/** Slightly taller crop so bottom-of-tag SKU print stays inside the OCR ROI. */
+	/** Tight ROI around shelf-tag line — smaller pixels → faster tesseract. */
 	function captureOcrReticle(canvas) {
-		return captureReticle(canvas, { widthRatio: 0.78, heightRatio: 0.36 });
+		return captureReticle(canvas, { widthRatio: 0.62, heightRatio: 0.2 });
 	}
 
 	onBeforeUnmount(stop);

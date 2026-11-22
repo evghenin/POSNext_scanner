@@ -1,16 +1,18 @@
 /**
  * Probe ERPNext/POSNext reachability.
  *
- * Offline APK: probe Frappe API (`frappe.ping`) — UI/OCR is local.
+ * Offline APK: prefer native HttpURLConnection probe (no CORS), else fetch.
  * Optional hosted PWA: can still probe `/pos-scanner` via probeScannerEndpoint.
  */
 
+import { t } from "./i18n.js";
 import {
 	buildApiOrigin,
 	buildScannerPageUrl,
 	normalizeScannerPath,
 	normalizeServerUrl,
 } from "./settings.js";
+import { isOfflineBundledUi, probeApiNative } from "./shellBridge.js";
 
 /** @typedef {"ok" | "offline" | "timeout" | "tls" | "dns" | "not_found" | "server_error" | "invalid_url" | "unknown"} ProbeKind */
 
@@ -36,22 +38,17 @@ const TIMEOUT_MS = 12000;
  */
 export function probeMessage(kind, url, status = null, mode = "scanner") {
 	const apiMode = mode === "api";
+	const baseSteps = [
+		t("probeStepCheckUrl"),
+		t("probeStepHttps"),
+		t("probeStepNetwork"),
+	];
 	const base = {
 		ok: false,
 		kind,
 		status,
 		url,
-		steps: apiMode
-			? [
-					"Проверьте URL сервера (API) в настройках",
-					"Убедитесь, что сайт открывается по HTTPS",
-					"Проверьте сеть (Wi‑Fi / мобильный интернет)",
-				]
-			: [
-					"Проверьте URL сервера и путь сканера в настройках",
-					"Убедитесь, что сайт открывается по HTTPS",
-					"Проверьте сеть (Wi‑Fi / мобильный интернет)",
-				],
+		steps: baseSteps,
 	};
 
 	switch (kind) {
@@ -59,10 +56,8 @@ export function probeMessage(kind, url, status = null, mode = "scanner") {
 			return {
 				ok: true,
 				kind: "ok",
-				title: "Сервер доступен",
-				description: apiMode
-					? "API ERPNext/POSNext отвечает (frappe.ping)."
-					: "Маршрут сканера отвечает.",
+				title: t("probeOkTitle"),
+				description: t("probeOkDesc"),
 				steps: [],
 				status,
 				url,
@@ -71,96 +66,75 @@ export function probeMessage(kind, url, status = null, mode = "scanner") {
 			return {
 				...base,
 				kind: "not_found",
-				title: apiMode ? "API не найден" : "На сервере нет приложения сканера",
-				description: apiMode
-					? "Сервер отвечает, но /api/method/frappe.ping недоступен. Проверьте, что это сайт ERPNext/Frappe."
-					: "Сервер отвечает, но маршрут сканера не найден (часто это страница «Здесь ничего нет» от ERPNext). Для APK UI уже встроен — нужен только API. Хостинг /pos-scanner опционален.",
-				steps: apiMode
-					? [
-							"Откройте в браузере: https://ваш-сайт/api/method/frappe.ping",
-							"Должен вернуться JSON с message: pong",
-							"Затем нажмите «Повторить» в приложении",
-						]
-					: [
-							"Для телефона используйте APK со встроенным UI (OCR/WASM внутри)",
-							"На сервере достаточно pairing/cart API POSNext",
-							"Опционально: опубликуйте /pos-scanner для браузера",
-							"Затем нажмите «Повторить» в приложении",
-						],
+				title: t("probeNotFoundTitle"),
+				description: t("probeNotFoundDesc"),
+				steps: [t("probeStepPing"), t("probeStepRetry")],
 			};
 		case "offline":
 			return {
 				...base,
 				kind: "offline",
-				title: "Нет сети",
-				description: "Устройство сейчас без доступа в интернет.",
-				steps: ["Включите Wi‑Fi или мобильные данные", "Повторите попытку"],
+				title: t("probeOfflineTitle"),
+				description: t("probeOfflineDesc"),
+				steps: [t("probeStepNetwork"), t("probeStepRetry")],
 			};
 		case "timeout":
 			return {
 				...base,
 				kind: "timeout",
-				title: "Сервер не отвечает",
-				description: "Превышено время ожидания ответа от сервера.",
-				steps: [
-					"Проверьте, что сайт доступен в обычном браузере",
-					"Проверьте VPN / файрвол",
-					"Повторите попытку",
-				],
+				title: t("probeTimeoutTitle"),
+				description: t("probeTimeoutDesc"),
+				steps: [t("probeStepBrowser"), t("probeStepVpn"), t("probeStepRetry")],
 			};
 		case "tls":
 			return {
 				...base,
 				kind: "tls",
-				title: "Ошибка HTTPS / сертификата",
-				description: "Не удалось установить защищённое соединение с сервером.",
-				steps: [
-					"Проверьте, что URL начинается с https://",
-					"Убедитесь, что сертификат сайта действителен",
-					"Для локальной отладки HTTP допустим только localhost/LAN",
-				],
+				title: t("probeTlsTitle"),
+				description: t("probeTlsDesc"),
+				steps: [t("probeStepHttps"), t("probeStepCert")],
 			};
 		case "dns":
 			return {
 				...base,
 				kind: "dns",
-				title: "Сервер не найден",
-				description: "Не удалось разрешить имя хоста (DNS).",
-				steps: ["Проверьте написание домена", "Проверьте DNS / VPN", "Повторите попытку"],
+				title: t("probeDnsTitle"),
+				description: t("probeDnsDesc"),
+				steps: [t("probeStepDomain"), t("probeStepVpn"), t("probeStepRetry")],
 			};
 		case "server_error":
 			return {
 				...base,
 				kind: "server_error",
-				title: "Ошибка сервера",
-				description: `Сервер вернул ошибку${status ? ` (HTTP ${status})` : ""}.`,
-				steps: ["Попробуйте позже", "Обратитесь к администратору сайта", "Повторите попытку"],
+				title: t("probeServerErrorTitle"),
+				description:
+					t("probeServerErrorDesc") + (status ? ` (HTTP ${status})` : ""),
+				steps: [t("probeStepLater"), t("probeStepAdmin"), t("probeStepRetry")],
 			};
 		case "invalid_url":
 			return {
 				...base,
 				kind: "invalid_url",
-				title: "Некорректный URL",
-				description: "Укажите адрес сайта вида https://pos.example.com.",
-				steps: ["Откройте настройки и исправьте URL сервера"],
+				title: t("probeInvalidUrlTitle"),
+				description: t("probeInvalidUrlDesc"),
+				steps: [t("probeStepCheckUrl")],
 			};
 		default:
 			return {
 				...base,
 				kind: "unknown",
-				title: "Не удалось подключиться",
-				description: apiMode
-					? "Проверка API сервера завершилась с ошибкой."
-					: "Проверка сервера сканера завершилась с ошибкой.",
-				steps: base.steps,
+				title: t("probeUnknownTitle"),
+				description: t("probeUnknownDesc"),
+				steps: baseSteps,
 			};
 	}
 }
 
 /**
- * Probe Frappe API origin (pairing/cart). Used by offline APK.
+ * Probe Frappe API origin (connect / cart). Used by offline APK + browser.
+ * Prefers native shell probe when available (avoids CORS from appassets).
  * @param {{ serverUrl: string }} cfg
- * @param {{ fetchImpl?: typeof fetch, timeoutMs?: number }} [opts]
+ * @param {{ fetchImpl?: typeof fetch, timeoutMs?: number, preferNative?: boolean }} [opts]
  * @returns {Promise<ProbeResult>}
  */
 export async function probeApiEndpoint(cfg, opts = {}) {
@@ -173,6 +147,17 @@ export async function probeApiEndpoint(cfg, opts = {}) {
 
 	if (typeof navigator !== "undefined" && navigator.onLine === false) {
 		return probeMessage("offline", url, null, "api");
+	}
+
+	const preferNative = opts.preferNative !== false && isOfflineBundledUi();
+	if (preferNative) {
+		const native = await probeApiNative(origin);
+		if (native) {
+			/** @type {ProbeKind} */
+			const kind = /** @type {ProbeKind} */ (native.kind || "unknown");
+			if (native.ok) return probeMessage("ok", native.url || url, native.status, "api");
+			return probeMessage(kind, native.url || url, native.status, "api");
+		}
 	}
 
 	const fetchImpl = opts.fetchImpl || fetch;

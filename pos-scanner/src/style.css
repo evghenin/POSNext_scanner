@@ -1,17 +1,40 @@
-:root {
+:root,
+:root[data-theme="dark"] {
 	color-scheme: dark;
 	--bg: #0b1220;
 	--bg-elevated: #141c2e;
 	--fg: #e8eef9;
 	--muted: #93a0b8;
 	--accent: #5eead4;
+	--accent-fg: #04201b;
 	--accent-dim: rgba(94, 234, 212, 0.16);
 	--warn: #f59e0b;
 	--danger: #fb7185;
 	--ok: #4ade80;
 	--reticle: rgba(94, 234, 212, 0.95);
+	--border: rgba(148, 163, 184, 0.35);
+	--input-bg: #0a1020;
+	--hero-glow: #1a2744;
 	--font: "IBM Plex Sans", "Segoe UI", sans-serif;
 	--mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+:root[data-theme="light"] {
+	color-scheme: light;
+	--bg: #f4f7fb;
+	--bg-elevated: #ffffff;
+	--fg: #0f172a;
+	--muted: #64748b;
+	--accent: #0d9488;
+	--accent-fg: #ecfeff;
+	--accent-dim: rgba(13, 148, 136, 0.12);
+	--warn: #d97706;
+	--danger: #e11d48;
+	--ok: #15803d;
+	--reticle: rgba(13, 148, 136, 0.95);
+	--border: rgba(15, 23, 42, 0.14);
+	--input-bg: #f8fafc;
+	--hero-glow: #dbeafe;
 }
 
 * {
@@ -34,7 +57,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
 	font: inherit;
 }
 

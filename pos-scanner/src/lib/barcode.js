@@ -1,4 +1,5 @@
 import { NATIVE_FORMATS, ZXING_FORMATS, normalizeFormatLabel } from "./formats.js";
+import { toCanvas, toImageData } from "./framePixels.js";
 import zxingWasmUrl from "zxing-wasm/reader/zxing_reader.wasm?url";
 
 /** @typedef {{ value: string, format: string, engine: "native" | "zxing" }} BarcodeHit */
@@ -51,22 +52,25 @@ async function getNativeDetector() {
 }
 
 /**
- * Decode barcodes from ImageBitmap / HTMLCanvasElement / ImageData / Blob.
+ * Decode barcodes from ImageBitmap / HTMLCanvasElement / ImageData / Blob / video.
  * Prefers native BarcodeDetector when formats are actually usable; always
  * falls back to zxing-wasm (required for Safari / PDF417 / Data Matrix parity).
  *
- * @param {ImageBitmap | HTMLCanvasElement | ImageData | Blob | HTMLVideoElement} source
+ * zxing-wasm@2 requires ImageData-like pixels or encoded bytes — not a raw canvas.
+ *
+ * @param {ImageBitmap | HTMLCanvasElement | ImageData | Blob | HTMLVideoElement | ArrayBuffer | Uint8Array} source
  * @param {{ preferNative?: boolean }} [opts]
  * @returns {Promise<BarcodeHit[]>}
  */
 export async function decodeBarcodes(source, { preferNative = true } = {}) {
 	const hits = [];
+	const nativeSource = toCanvas(source) || source;
 
 	if (preferNative) {
 		const detector = await getNativeDetector();
 		if (detector) {
 			try {
-				const detected = await detector.detect(source);
+				const detected = await detector.detect(nativeSource);
 				for (const d of detected) {
 					const value = String(d.rawValue || "").trim();
 					if (!value) continue;
@@ -84,7 +88,12 @@ export async function decodeBarcodes(source, { preferNative = true } = {}) {
 	}
 
 	const { readBarcodes } = await prepareBarcodeEngine();
-	const results = await readBarcodes(source, {
+	const zxingSource = await coerceForZxing(source);
+	if (!zxingSource) {
+		// Empty / unsupported frame — caller treats as no hits, not a sticky OCR error.
+		return [];
+	}
+	const results = await readBarcodes(zxingSource, {
 		tryHarder: true,
 		tryInvert: true,
 		formats: [...ZXING_FORMATS],
@@ -101,6 +110,21 @@ export async function decodeBarcodes(source, { preferNative = true } = {}) {
 		});
 	}
 	return dedupeHits(hits);
+}
+
+/**
+ * @param {unknown} source
+ * @returns {Promise<ImageData | Uint8Array | ArrayBuffer | Blob | null>}
+ */
+async function coerceForZxing(source) {
+	if (!source) return null;
+	if (typeof Blob !== "undefined" && source instanceof Blob) return source;
+	if (typeof File !== "undefined" && source instanceof File) return source;
+	if (source instanceof ArrayBuffer) return source;
+	if (ArrayBuffer.isView(source)) return source;
+	const pixels = toImageData(source);
+	if (pixels) return pixels;
+	return null;
 }
 
 /** @param {BarcodeHit[]} hits */
