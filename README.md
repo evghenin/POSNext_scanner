@@ -18,10 +18,10 @@ This app is **separate from** the POSNext Frappe app. POSNext keeps backend pair
 
 ## Version
 
-Current release: **0.1.1**
+Current release: **0.1.2**
 
-- Demo APK: [`releases/posnext-scanner-demo-0.1.1.apk`](./releases/posnext-scanner-demo-0.1.1.apk)
-- Previous: [`releases/posnext-scanner-demo-0.1.0.apk`](./releases/posnext-scanner-demo-0.1.0.apk)
+- Demo APK: [`releases/posnext-scanner-demo-0.1.2.apk`](./releases/posnext-scanner-demo-0.1.2.apk)
+- Previous: [`releases/posnext-scanner-demo-0.1.1.apk`](./releases/posnext-scanner-demo-0.1.1.apk), [`0.1.0`](./releases/posnext-scanner-demo-0.1.0.apk)
 - GitHub Release: tag `vMAJOR.MINOR.PATCH` when published
 
 Bump the version in release filenames and git tags together (`vMAJOR.MINOR.PATCH`).

@@ -213,7 +213,7 @@ async function retryConnection() {
 			<div v-if="!started" class="gate">
 				<h1>Камера + штрихкоды + OCR</h1>
 				<p>
-					Прототип для A03–A05: zxing-wasm (1D/2D) и tesseract.js (SKU##### в
+					Прототип для A03–A05: zxing-wasm (1D/2D) и tesseract.js (SKU/NSU/SRV##### в
 					прицеле). Поиск товаров — mock-каталог.
 				</p>
 				<p v-if="settings.serverUrl" class="gate-meta mono">
@@ -339,7 +339,7 @@ async function retryConnection() {
 				<h2>Движки и демо-каталог</h2>
 				<ul>
 					<li>1D/2D: <code>zxing-wasm</code> (+ native BarcodeDetector если доступен)</li>
-					<li>OCR: <code>tesseract.js</code>, только область прицела, маска <code>SKU#####</code></li>
+					<li>OCR: <code>tesseract.js</code>, только область прицела, маски <code>SKU#####</code> / <code>NSU#####</code> / <code>SRV#####</code></li>
 					<li>Штрихкод имеет приоритет над OCR</li>
 					<li>Несколько совпадений → ручной выбор</li>
 				</ul>

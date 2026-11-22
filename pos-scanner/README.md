@@ -10,7 +10,7 @@ Path: `pos-scanner/` (separate from the `/pos` till SPA per [fork audit](../docs
 |--------|--------|-----|
 | 1D/2D | **`zxing-wasm`** (ZXing-C++ WASM) | Covers EAN-8/13, UPC-A/E, Code 39/128, QR, Data Matrix, PDF417 in one engine; works where native `BarcodeDetector` is missing or broken (Safari/iOS). |
 | Fast path | Native **`BarcodeDetector`** when `getSupportedFormats()` includes retail formats | Chrome Android only in practice; never relied on alone. |
-| OCR | **`tesseract.js` v5** (eng) | Browser WASM OCR; crop to reticle; regex `\bSKU\d{5}\b` → uppercase; multi-match → picker. |
+| OCR | **`tesseract.js` v5** (eng) | Browser WASM OCR; crop to reticle; regex `\b(?:SKU|NSU|SRV)\d{5}\b` → uppercase; multi-match → picker. |
 | UI | Vue 3 + Vite | Matches POSNext frontend toolchain; tiny surface area. |
 | Lookup | Mock catalog | Swap later for `pos_next.api.items.search_by_barcode`. |
 
