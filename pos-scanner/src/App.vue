@@ -1,10 +1,12 @@
 <script setup>
 import { computed, nextTick, onMounted, ref } from "vue";
+import ConnectionErrorPanel from "@/components/ConnectionErrorPanel.vue";
 import ManualEntry from "@/components/ManualEntry.vue";
 import MatchPicker from "@/components/MatchPicker.vue";
 import ResultCard from "@/components/ResultCard.vue";
 import Reticle from "@/components/Reticle.vue";
 import SettingsPanel from "@/components/SettingsPanel.vue";
+import { probeScannerEndpoint } from "@/lib/connectionProbe.js";
 import { listMockItems } from "@/lib/mockCatalog.js";
 import { WORK_MODE_LABELS, loadSettings, saveSettings } from "@/lib/settings.js";
 import { isAndroidDemoShell, readNativeServerConfig } from "@/lib/shellBridge.js";
@@ -17,6 +19,8 @@ const showHelp = ref(false);
 const showSettings = ref(false);
 const started = ref(false);
 const settings = ref(loadSettings());
+const connectionError = ref(null);
+const probing = ref(false);
 
 const camera = useCamera();
 const scanner = useScanner(camera);
@@ -40,6 +44,9 @@ onMounted(async () => {
 	// First launch convenience: open settings if no server URL yet (e.g. blank APK host)
 	if (!settings.value.serverUrl || settings.value.serverUrl.includes("example.com")) {
 		if (isAndroidDemoShell()) showSettings.value = true;
+	} else if (!isAndroidDemoShell()) {
+		// Browser / TWA: soft-check so missing /pos-scanner is explained in our UI
+		await runConnectionProbe({ silentOk: true });
 	}
 });
 
@@ -54,11 +61,37 @@ function syncFromNativeShell() {
 	settings.value = next;
 }
 
-function onSettingsSaved(next) {
+async function onSettingsSaved(next) {
 	settings.value = next;
+	connectionError.value = null;
+	if (!isAndroidDemoShell()) {
+		await runConnectionProbe({ silentOk: true });
+	}
+}
+
+async function runConnectionProbe({ silentOk = false } = {}) {
+	if (!settings.value.serverUrl) return true;
+	probing.value = true;
+	try {
+		const result = await probeScannerEndpoint({
+			serverUrl: settings.value.serverUrl,
+			scannerPath: settings.value.scannerPath,
+		});
+		if (!result.ok) {
+			connectionError.value = result;
+			return false;
+		}
+		if (!silentOk) connectionError.value = null;
+		else connectionError.value = null;
+		return true;
+	} finally {
+		probing.value = false;
+	}
 }
 
 async function begin() {
+	const ok = await runConnectionProbe();
+	if (!ok) return;
 	await nextTick();
 	await camera.start(videoRef.value);
 	if (camera.ready.value) {
@@ -84,6 +117,7 @@ function closeManual() {
 
 function openSettings() {
 	scanner.paused.value = true;
+	connectionError.value = null;
 	showSettings.value = true;
 }
 
@@ -91,6 +125,14 @@ function closeSettings() {
 	showSettings.value = false;
 	if (!scanner.result.value && !scanner.pendingChoice.value && !showManual.value) {
 		scanner.paused.value = false;
+	}
+}
+
+async function retryConnection() {
+	connectionError.value = null;
+	const ok = await runConnectionProbe();
+	if (ok && !started.value) {
+		/* stay on gate — user can open camera */
 	}
 }
 </script>
@@ -144,14 +186,21 @@ function closeSettings() {
 				<p v-if="needsServerHint" class="warn">
 					Сначала укажите URL сервера в настройках.
 				</p>
+				<p v-if="probing" class="gate-meta">Проверка сервера…</p>
 				<div class="gate-actions">
 					<button
 						type="button"
 						class="cta"
-						:disabled="scanner.status.value === 'loading'"
+						:disabled="scanner.status.value === 'loading' || probing"
 						@click="begin"
 					>
-						{{ scanner.status.value === "loading" ? "Загрузка движков…" : "Открыть камеру" }}
+						{{
+							probing
+								? "Проверка сервера…"
+								: scanner.status.value === "loading"
+									? "Загрузка движков…"
+									: "Открыть камеру"
+						}}
 					</button>
 					<button type="button" class="cta secondary" @click="openSettings">
 						Настройки
@@ -225,6 +274,14 @@ function closeSettings() {
 				}
 			"
 			@saved="onSettingsSaved"
+		/>
+
+		<ConnectionErrorPanel
+			v-if="connectionError"
+			:result="connectionError"
+			@retry="retryConnection"
+			@settings="openSettings"
+			@dismiss="connectionError = null"
 		/>
 
 		<aside v-if="showHelp" class="help" @click.self="showHelp = false">

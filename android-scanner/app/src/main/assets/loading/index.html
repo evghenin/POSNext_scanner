@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<title>Проверка сервера…</title>
+		<style>
+			body {
+				margin: 0;
+				min-height: 100vh;
+				display: grid;
+				place-content: center;
+				background: #0b1220;
+				color: #e8eef9;
+				font-family: "Segoe UI", system-ui, sans-serif;
+				text-align: center;
+				padding: 1.5rem;
+			}
+			p {
+				color: #93a0b8;
+			}
+			.dot {
+				width: 42px;
+				height: 42px;
+				margin: 0 auto 1rem;
+				border-radius: 50%;
+				border: 3px solid rgba(94, 234, 212, 0.25);
+				border-top-color: #5eead4;
+				animation: spin 0.8s linear infinite;
+			}
+			@keyframes spin {
+				to {
+					transform: rotate(360deg);
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div class="dot" aria-hidden="true"></div>
+		<h1>Проверка сервера…</h1>
+		<p>Ищем маршрут сканера на указанном сайте</p>
+	</body>
+</html>

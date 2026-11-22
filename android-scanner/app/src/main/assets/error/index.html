@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<title>Ошибка подключения — POSNext Scanner</title>
+		<style>
+			:root {
+				color-scheme: dark;
+				--bg: #0b1220;
+				--fg: #e8eef9;
+				--muted: #93a0b8;
+				--accent: #5eead4;
+				--warn: #f59e0b;
+				font-family: "Segoe UI", system-ui, sans-serif;
+			}
+			body {
+				margin: 0;
+				min-height: 100vh;
+				background: radial-gradient(900px 420px at 50% -10%, #1a2744, var(--bg));
+				color: var(--fg);
+				padding: 1.25rem;
+				padding-bottom: 2rem;
+			}
+			h1 {
+				font-size: 1.25rem;
+				margin: 0 0 0.55rem;
+			}
+			p {
+				color: var(--muted);
+				line-height: 1.45;
+			}
+			.mono {
+				font-family: ui-monospace, monospace;
+				font-size: 0.8rem;
+				color: var(--accent);
+				word-break: break-all;
+			}
+			ol {
+				color: var(--muted);
+				line-height: 1.45;
+				padding-left: 1.2rem;
+			}
+			.actions {
+				display: grid;
+				gap: 0.55rem;
+				margin-top: 1.25rem;
+			}
+			button {
+				border: 0;
+				border-radius: 12px;
+				padding: 0.9rem 1rem;
+				font-weight: 700;
+				font: inherit;
+			}
+			.primary {
+				background: var(--accent);
+				color: #04201b;
+			}
+			.secondary {
+				background: transparent;
+				color: var(--fg);
+				border: 1px solid rgba(255, 255, 255, 0.22);
+			}
+		</style>
+	</head>
+	<body>
+		<h1 id="title">Не удалось подключиться</h1>
+		<p id="desc"></p>
+		<p id="url" class="mono"></p>
+		<ol id="steps"></ol>
+		<div class="actions">
+			<button type="button" class="primary" id="retry">Повторить</button>
+			<button type="button" class="secondary" id="settings">Изменить настройки</button>
+		</div>
+		<script>
+			var MESSAGES = {
+				not_found: {
+					title: "На сервере нет приложения сканера",
+					desc:
+						"Сервер отвечает, но маршрут сканера не найден. Часто вместо него показывается страница ERPNext «Здесь ничего нет». Нужно установить обновление POSNext с маршрутом /pos-scanner и опубликовать фронтенд сканера.",
+					steps: [
+						"Установите/обновите POSNext на сайте (migrate / bench)",
+						"Соберите pos-scanner (npm run build) и опубликуйте assets",
+						"Проверьте в браузере: https://ваш-сайт/pos-scanner",
+						"Затем нажмите «Повторить»",
+					],
+				},
+				offline: {
+					title: "Нет сети",
+					desc: "Устройство сейчас без доступа в интернет.",
+					steps: ["Включите Wi‑Fi или мобильные данные", "Повторите попытку"],
+				},
+				timeout: {
+					title: "Сервер не отвечает",
+					desc: "Превышено время ожидания ответа от сервера.",
+					steps: ["Проверьте сайт в обычном браузере", "Проверьте VPN / файрвол", "Повторите"],
+				},
+				tls: {
+					title: "Ошибка HTTPS / сертификата",
+					desc: "Не удалось установить защищённое соединение.",
+					steps: ["Проверьте https:// и сертификат сайта", "Обратитесь к администратору"],
+				},
+				dns: {
+					title: "Сервер не найден",
+					desc: "Не удалось разрешить имя хоста (DNS).",
+					steps: ["Проверьте написание домена", "Проверьте DNS / VPN"],
+				},
+				server_error: {
+					title: "Ошибка сервера",
+					desc: "Сервер вернул внутреннюю ошибку.",
+					steps: ["Попробуйте позже", "Обратитесь к администратору сайта"],
+				},
+				invalid_url: {
+					title: "Некорректный URL",
+					desc: "Укажите адрес вида https://pos.example.com.",
+					steps: ["Откройте настройки и исправьте URL"],
+				},
+				unknown: {
+					title: "Не удалось подключиться",
+					desc: "Проверка сервера сканера завершилась с ошибкой.",
+					steps: [
+						"Проверьте URL, HTTPS и сеть",
+						"Убедитесь, что POSNext scanner установлен на сайте",
+						"Повторите попытку",
+					],
+				},
+			};
+
+			function qs(name) {
+				return new URLSearchParams(location.search).get(name) || "";
+			}
+
+			var kind = qs("kind") || "unknown";
+			var url = qs("url") || "";
+			var msg = MESSAGES[kind] || MESSAGES.unknown;
+			document.getElementById("title").textContent = msg.title;
+			document.getElementById("desc").textContent = msg.desc;
+			document.getElementById("url").textContent = url ? decodeURIComponent(url) : "";
+			var ol = document.getElementById("steps");
+			msg.steps.forEach(function (s) {
+				var li = document.createElement("li");
+				li.textContent = s;
+				ol.appendChild(li);
+			});
+
+			document.getElementById("retry").onclick = function () {
+				if (window.PosNextShell && window.PosNextShell.retryLastServer) {
+					window.PosNextShell.retryLastServer();
+					return;
+				}
+				location.href = "file:///android_asset/bootstrap/index.html";
+			};
+			document.getElementById("settings").onclick = function () {
+				location.href = "file:///android_asset/bootstrap/index.html";
+			};
+		</script>
+	</body>
+</html>
