@@ -114,11 +114,13 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 					return insets;
 				});
 
+		// Path prefix /www/ must map to assets/www/… — stock AssetsPathHandler strips the
+		// prefix and opens from the assets root, which caused ERR_INVALID_RESPONSE on launch.
 		assetLoader =
 				new WebViewAssetLoader.Builder()
 						.setDomain(ASSET_DOMAIN)
 						.setHttpAllowed(false)
-						.addPathHandler("/www/", new WebViewAssetLoader.AssetsPathHandler(this))
+						.addPathHandler("/www/", new BundledWwwAssetsHandler(this))
 						.build();
 
 		WebSettings settings = webView.getSettings();
@@ -146,8 +148,13 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 						if (assetLoader != null && request != null && request.getUrl() != null) {
 							WebResourceResponse local =
 									assetLoader.shouldInterceptRequest(request.getUrl());
-							if (local != null) {
+							// Never return an empty intercept (null stream) — that is
+							// net::ERR_INVALID_RESPONSE in Chromium WebView.
+							if (local != null && local.getData() != null) {
 								return local;
+							}
+							if (local != null) {
+								Log.w(TAG, "AssetLoader empty response for " + request.getUrl());
 							}
 						}
 						return super.shouldInterceptRequest(view, request);
@@ -187,7 +194,21 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 							return;
 						}
 						String url = request.getUrl() != null ? request.getUrl().toString() : "";
-						if (isLocalAsset(url) || isBundledScannerUrl(url)) {
+						if (isLocalAsset(url)) {
+							return;
+						}
+						if (isBundledScannerUrl(url)) {
+							String desc =
+									error != null && error.getDescription() != null
+											? error.getDescription().toString()
+											: "unknown";
+							Log.e(TAG, "Bundled scanner failed to load: " + url + " (" + desc + ")");
+							loadLocal(BOOTSTRAP_URL);
+							Toast.makeText(
+											WebViewScannerActivity.this,
+											"Ошибка загрузки локального UI (" + desc + ")",
+											Toast.LENGTH_LONG)
+									.show();
 							return;
 						}
 						Log.w(TAG, "Ignoring remote load error on " + url);
