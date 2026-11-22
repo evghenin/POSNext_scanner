@@ -4,6 +4,7 @@ import ConnectionErrorPanel from "@/components/ConnectionErrorPanel.vue";
 import ConnectionStatus from "@/components/ConnectionStatus.vue";
 import PairingScreen from "@/components/PairingScreen.vue";
 import SettingsPanel from "@/components/SettingsPanel.vue";
+import WorkMode from "@/components/WorkMode.vue";
 import { probeApiEndpoint } from "@/lib/connectionProbe.js";
 import { setLanguage, t } from "@/lib/i18n.js";
 import { checkActivePairing, loadPairingSession } from "@/lib/pairing.js";
@@ -11,7 +12,7 @@ import { hasSavedSettings, loadSettings } from "@/lib/settings.js";
 import { applyTheme } from "@/lib/theme.js";
 
 /**
- * @typedef {'boot' | 'settings' | 'probing' | 'connected' | 'error' | 'checking_pair' | 'pair' | 'paired' | 'work_stub'} GatePhase
+ * @typedef {'boot' | 'settings' | 'probing' | 'connected' | 'error' | 'checking_pair' | 'pair' | 'paired' | 'work'} GatePhase
  */
 
 const settings = ref(loadSettings());
@@ -90,7 +91,7 @@ function onSettingsSaved(next) {
 	settings.value = next;
 	settingsBlocking.value = false;
 	showSettings.value = false;
-	if (phase.value === "pair" || phase.value === "paired" || phase.value === "work_stub") {
+	if (phase.value === "pair" || phase.value === "paired" || phase.value === "work") {
 		return;
 	}
 	runProbe({ fromSave: true });
@@ -113,7 +114,6 @@ function retryConnection() {
 	runProbe({ fromSave: false });
 }
 
-/** Connected → Start work: check pairing, else QR screen. */
 async function startWorkFromConnected() {
 	phase.value = "checking_pair";
 	pairingCheckMsg.value = t("checkingPairing");
@@ -135,9 +135,8 @@ function onPaired(session) {
 	phase.value = "paired";
 }
 
-/** Paired → Start work → work stub (layout later). */
 function startWorkFromPaired() {
-	phase.value = "work_stub";
+	phase.value = "work";
 }
 
 function backToConnected() {
@@ -145,6 +144,11 @@ function backToConnected() {
 }
 
 function openPairAgain() {
+	phase.value = "pair";
+}
+
+function onPairAgainFromWork() {
+	// Cart persists in localStorage; re-pair without clearing it.
 	phase.value = "pair";
 }
 </script>
@@ -202,19 +206,13 @@ function openPairAgain() {
 				</div>
 			</section>
 
-			<section v-else-if="phase === 'work_stub'" class="gate">
-				<p class="brand">{{ t("appName") }}</p>
-				<h1>{{ t("workStubTitle") }}</h1>
-				<p class="desc">{{ t("workStubBody") }}</p>
-				<div class="actions">
-					<button type="button" class="primary" @click="backToConnected">
-						{{ t("backToConnected") }}
-					</button>
-					<button type="button" class="secondary" @click="openSettings">
-						{{ t("openSettings") }}
-					</button>
-				</div>
-			</section>
+			<WorkMode
+				v-else-if="phase === 'work'"
+				:pairing="pairingSession"
+				@pair-again="onPairAgainFromWork"
+				@settings="openSettings"
+				@exit="backToConnected"
+			/>
 
 			<section v-else-if="phase === 'boot' || phase === 'settings'" class="gate boot">
 				<p class="brand">{{ t("appName") }}</p>
@@ -244,7 +242,7 @@ function openPairAgain() {
 
 .stage {
 	position: relative;
-	overflow: auto;
+	overflow: hidden;
 	min-height: 0;
 }
 

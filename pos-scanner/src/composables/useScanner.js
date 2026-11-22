@@ -260,6 +260,17 @@ export function useScanner(camera) {
 		try {
 			const lookup = await lookupItem(payload.value);
 			const item = lookup?.item || null;
+			const found = Boolean(lookup?.found && item);
+			const rate = item?.rate;
+			if (!found || rate == null || !Number.isFinite(Number(rate))) {
+				feedback("error");
+				lastError.value = !found ? "item_missing" : "item_no_price";
+				dedupe.forget(payload.value);
+				result.value = null;
+				pendingChoice.value = null;
+				paused.value = false;
+				return;
+			}
 			const uoms = item?.uoms?.length ? item.uoms : item?.uom ? [item.uom] : [];
 			const defaultUom = item?.uom || uoms[0] || "Nos";
 			result.value = {

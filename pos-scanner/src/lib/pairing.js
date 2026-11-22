@@ -167,7 +167,8 @@ export async function redeemPairingFromQr(qrRaw) {
 	const message = await callFrappeMethod("pos_next.api.mobile_scanner.redeem_pairing", {
 		device_id: deviceId,
 		qr_token: qrToken,
-		device_label: "POSNext Scanner",
+		// Do not send a device display name to the till.
+		device_label: "",
 		user_agent: typeof navigator !== "undefined" ? navigator.userAgent : "",
 	});
 
