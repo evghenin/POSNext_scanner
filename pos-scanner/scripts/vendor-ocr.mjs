@@ -2,9 +2,13 @@
 /**
  * Download Tesseract worker / LSTM SIMD core / eng traineddata into public/ocr/
  * so production and Android WebView do not depend on broken or blocked CDN paths.
+ *
+ * Cloudflare on erp.hotel-life.md challenges non-.js binaries (.gz / .wasm / .bin)
+ * while allowing .js. We therefore also publish CF-safe `*.js` copies of binaries
+ * (same bytes, misleading extension) for browser fetch / IDB seeding.
  */
 import { createWriteStream } from "node:fs";
-import { mkdir, access } from "node:fs/promises";
+import { mkdir, access, copyFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pipeline } from "node:stream/promises";
@@ -25,10 +29,12 @@ const ASSETS = [
 	{
 		url: "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1/tesseract-core-simd-lstm.wasm",
 		file: "tesseract-core-simd-lstm.wasm",
+		cfSafeJs: "tesseract-core-simd-lstm.wasm.bin.js",
 	},
 	{
 		url: "https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int/eng.traineddata.gz",
 		file: "eng.traineddata.gz",
+		cfSafeJs: "eng.traineddata.gz.js",
 	},
 ];
 
@@ -47,14 +53,21 @@ async function main() {
 			try {
 				await access(dest);
 				console.log(`skip (exists) ${asset.file}`);
-				continue;
 			} catch {
-				/* download */
+				process.stdout.write(`fetch ${asset.file}… `);
+				await download(asset.url, dest);
+				console.log("ok");
 			}
+		} else {
+			process.stdout.write(`fetch ${asset.file}… `);
+			await download(asset.url, dest);
+			console.log("ok");
 		}
-		process.stdout.write(`fetch ${asset.file}… `);
-		await download(asset.url, dest);
-		console.log("ok");
+		if (asset.cfSafeJs) {
+			const jsDest = join(outDir, asset.cfSafeJs);
+			await copyFile(dest, jsDest);
+			console.log(`cf-safe copy → ${asset.cfSafeJs}`);
+		}
 	}
 	console.log(`OCR assets in ${outDir}`);
 }

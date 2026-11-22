@@ -6,8 +6,10 @@ import { lookupItem } from "@/lib/mockCatalog.js";
 import {
 	getLastOcrError,
 	getOcrCacheHints,
+	ocrStatusLabel,
 	prepareOcrEngine,
 	recognizeSkuInRegion,
+	subscribeOcrStatus,
 } from "@/lib/ocr.js";
 
 /**
@@ -22,6 +24,9 @@ export function useScanner(camera) {
 	const engineInfo = ref(null);
 	const ocrHints = ref(null);
 	const ocrReady = ref(false);
+	/** @type {import("vue").Ref<'idle' | 'loading' | 'ready' | 'error'>} */
+	const ocrStatus = ref("idle");
+	const ocrStatusText = ref(ocrStatusLabel("idle"));
 	const fpsHint = ref(0);
 	const lastDecodeMs = ref(0);
 
@@ -40,6 +45,15 @@ export function useScanner(camera) {
 	const BARCODE_INTERVAL_MS = 180;
 	const OCR_EVERY_N_PASSES = 4; // OCR is heavier — throttle
 
+	const unsubOcr = subscribeOcrStatus((payload) => {
+		ocrStatus.value = payload.status;
+		ocrStatusText.value = payload.message;
+		ocrReady.value = payload.status === "ready";
+		if (payload.status === "error") {
+			lastError.value = payload.message;
+		}
+	});
+
 	const hasPending = computed(() => Boolean(pendingChoice.value || result.value));
 
 	async function warmEngines() {
@@ -47,18 +61,19 @@ export function useScanner(camera) {
 		try {
 			await prepareBarcodeEngine();
 			engineInfo.value = await getBarcodeEngineInfo();
-			// OCR warm in background — surface failure (was previously silent).
+			// OCR warm in background — always surface RU status (never silent).
 			prepareOcrEngine()
 				.then(() => {
 					ocrReady.value = true;
 					ocrHints.value = getOcrCacheHints();
+					if (lastError.value?.startsWith("OCR")) lastError.value = null;
 				})
 				.catch((e) => {
 					ocrReady.value = false;
 					ocrHints.value = getOcrCacheHints();
 					const msg = e?.message || getLastOcrError() || String(e);
 					console.warn("[scanner] OCR warm failed", msg);
-					lastError.value = `OCR не загрузился: ${msg}`;
+					lastError.value = `OCR ошибка: ${msg}`;
 				});
 			status.value = "ready";
 		} catch (e) {
@@ -89,7 +104,10 @@ export function useScanner(camera) {
 	function resumeScanning() {
 		pendingChoice.value = null;
 		result.value = null;
-		lastError.value = null;
+		// Keep OCR error visible until OCR recovers — do not clear OCR ошибки on dismiss.
+		if (lastError.value && !String(lastError.value).startsWith("OCR")) {
+			lastError.value = null;
+		}
 		paused.value = false;
 		if (running.value) schedule();
 	}
@@ -153,14 +171,14 @@ export function useScanner(camera) {
 				ocrEvery = (ocrEvery + 1) % OCR_EVERY_N_PASSES;
 				if (ocrEvery === 0) {
 					if (!ocrReady.value) {
-						// Retry warm if earlier CDN/path load failed
+						// Retry warm if earlier path load failed
 						prepareOcrEngine()
 							.then(() => {
 								ocrReady.value = true;
-								lastError.value = null;
+								if (lastError.value?.startsWith("OCR")) lastError.value = null;
 							})
 							.catch((e) => {
-								lastError.value = `OCR: ${e?.message || getLastOcrError() || e}`;
+								lastError.value = `OCR ошибка: ${e?.message || getLastOcrError() || e}`;
 							});
 					} else {
 						const ocrFrame =
@@ -196,7 +214,8 @@ export function useScanner(camera) {
 				}
 			}
 		} catch (e) {
-			lastError.value = e?.message || String(e);
+			const msg = e?.message || String(e);
+			lastError.value = msg.startsWith("OCR") ? msg : `OCR ошибка: ${msg}`;
 		} finally {
 			busy = false;
 			schedule();
@@ -264,7 +283,10 @@ export function useScanner(camera) {
 		resumeScanning();
 	}
 
-	onBeforeUnmount(stopLoop);
+	onBeforeUnmount(() => {
+		stopLoop();
+		unsubOcr();
+	});
 
 	return {
 		running,
@@ -274,6 +296,8 @@ export function useScanner(camera) {
 		engineInfo,
 		ocrHints,
 		ocrReady,
+		ocrStatus,
+		ocrStatusText,
 		fpsHint,
 		lastDecodeMs,
 		pendingChoice,

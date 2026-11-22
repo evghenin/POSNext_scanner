@@ -51,6 +51,7 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 	private static final String PREFS = "posnext_scanner_shell";
 	private static final String KEY_SERVER_URL = "server_url";
 	private static final String KEY_SCANNER_PATH = "scanner_path";
+	private static final String KEY_CACHE_BUST = "asset_cache_bust";
 	private static final String BOOTSTRAP_URL = "file:///android_asset/bootstrap/index.html";
 	private static final String ERROR_URL = "file:///android_asset/error/index.html";
 	private static final String LOADING_URL = "file:///android_asset/loading/index.html";
@@ -118,7 +119,10 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		settings.setAllowContentAccess(false);
 		settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 		settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
-		settings.setUserAgentString(settings.getUserAgentString() + " POSNextScannerAPK/0.1.2");
+		settings.setUserAgentString(
+				settings.getUserAgentString() + " POSNextScannerAPK/" + BuildConfig.VERSION_NAME);
+
+		maybeClearWebViewCacheForUpgrade();
 
 		webView.addJavascriptInterface(new ShellBridge(this), "PosNextShell");
 
@@ -316,7 +320,7 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 									suppressNextHttpError = false;
 									ensureAndroidCameraPermission();
 									if (webView != null) {
-										webView.loadUrl(finalResult.url);
+										webView.loadUrl(withCacheBust(finalResult.url));
 									}
 								} else {
 									showConnectionError(finalResult.kind, finalResult.url, finalResult.status);
@@ -350,6 +354,31 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		if (webView != null) {
 			webView.loadUrl(url);
 		}
+	}
+
+	/** Drop HTTP cache when APK version changes so remote PWA OCR assets are not stale. */
+	private void maybeClearWebViewCacheForUpgrade() {
+		String current = BuildConfig.VERSION_NAME;
+		String previous = prefs().getString(KEY_CACHE_BUST, "");
+		if (current.equals(previous)) {
+			return;
+		}
+		try {
+			webView.clearCache(true);
+			webView.clearHistory();
+		} catch (Exception e) {
+			Log.w(TAG, "WebView cache clear failed", e);
+		}
+		prefs().edit().putString(KEY_CACHE_BUST, current).apply();
+	}
+
+	@NonNull
+	private static String withCacheBust(@NonNull String url) {
+		String marker = "apk=" + Uri.encode(BuildConfig.VERSION_NAME);
+		if (url.contains(marker)) {
+			return url;
+		}
+		return url + (url.contains("?") ? "&" : "?") + marker;
 	}
 
 	private void runOnMain(@NonNull Runnable r) {

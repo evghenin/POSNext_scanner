@@ -1,27 +1,79 @@
+import { set as idbSet, get as idbGet } from "idb-keyval";
 import { extractSkuCodes } from "./sku.js";
 
 /** @typedef {{ codes: string[], rawText: string, durationMs: number }} OcrResult */
+/** @typedef {'idle' | 'loading' | 'ready' | 'error'} OcrUiStatus */
 
 let workerPromise = null;
 let lastOcrError = null;
+/** @type {OcrUiStatus} */
+let ocrUiStatus = "idle";
+/** @type {Set<(s: { status: OcrUiStatus, message: string, detail?: string | null }) => void>} */
+const statusListeners = new Set();
+
+const IDB_LANG_KEY = "./eng.traineddata";
+const CDN_LANG =
+	"https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int/eng.traineddata.gz";
 
 function isNodeRuntime() {
 	return typeof process !== "undefined" && Boolean(process.versions?.node) && typeof window === "undefined";
 }
 
+function setOcrUi(status, message, detail = null) {
+	ocrUiStatus = status;
+	if (status === "error") lastOcrError = detail || message;
+	if (status === "ready") lastOcrError = null;
+	const payload = { status, message, detail };
+	for (const fn of statusListeners) {
+		try {
+			fn(payload);
+		} catch {
+			/* ignore listener errors */
+		}
+	}
+}
+
+export function subscribeOcrStatus(fn) {
+	statusListeners.add(fn);
+	fn({
+		status: ocrUiStatus,
+		message: ocrStatusLabel(ocrUiStatus, lastOcrError),
+		detail: lastOcrError,
+	});
+	return () => statusListeners.delete(fn);
+}
+
+export function ocrStatusLabel(status = ocrUiStatus, detail = lastOcrError) {
+	if (status === "ready") return "OCR готов";
+	if (status === "loading") return "OCR загружается…";
+	if (status === "error") return `OCR ошибка: ${detail || "неизвестная ошибка"}`;
+	return "OCR…";
+}
+
+export function getOcrUiStatus() {
+	return { status: ocrUiStatus, message: ocrStatusLabel(), detail: lastOcrError };
+}
+
 /**
  * Resolve tesseract asset URLs for the browser.
- * Prefer same-origin `ocr/` (vendored via `npm run vendor:ocr`); fall back to the
- * correct jsDelivr packages — never `tesseract.js-core/tessdata` (404).
+ * Prefer same-origin `ocr/` (vendored via `npm run vendor:ocr`).
+ * Tessdata is loaded from CF-safe `eng.traineddata.gz.js` (see seedEngLanguageCache).
  */
 function assetPaths() {
 	const base = import.meta.env?.BASE_URL || "/";
-	const localRoot = new URL("ocr/", base.startsWith("http") ? base : `https://placeholder.local${base.endsWith("/") ? base : `${base}/`}`).pathname;
+	const localRoot = new URL(
+		"ocr/",
+		base.startsWith("http") ? base : `https://placeholder.local${base.endsWith("/") ? base : `${base}/`}`
+	).pathname;
 	const useLocal = Boolean(import.meta.env?.PROD) || import.meta.env?.VITE_OCR_LOCAL === "1";
 	if (useLocal) {
 		return {
 			workerPath: `${localRoot}worker.min.js`,
 			langPath: localRoot.replace(/\/$/, ""),
+			/** CF-safe: same gzip bytes as eng.traineddata.gz, .js extension bypasses WAF. */
+			langDataUrl: `${localRoot}eng.traineddata.gz.js`,
+			/** Canonical name (often blocked by Cloudflare bot challenge). */
+			langDataUrlBlocked: `${localRoot}eng.traineddata.gz`,
 			corePath: `${localRoot}tesseract-core-simd-lstm.wasm.js`,
 			source: "local",
 		};
@@ -29,6 +81,8 @@ function assetPaths() {
 	return {
 		workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js",
 		langPath: "https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int",
+		langDataUrl: CDN_LANG,
+		langDataUrlBlocked: null,
 		corePath:
 			"https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1/tesseract-core-simd-lstm.wasm.js",
 		source: "cdn",
@@ -39,33 +93,106 @@ export function getLastOcrError() {
 	return lastOcrError;
 }
 
+/**
+ * Fetch binary OCR asset; reject Cloudflare HTML challenge pages.
+ * @param {string} url
+ */
+async function fetchOcrBinary(url) {
+	const res = await fetch(url, { credentials: "same-origin", cache: "force-cache" });
+	if (!res.ok) {
+		throw new Error(`HTTP ${res.status} для ${url}`);
+	}
+	const ct = (res.headers.get("content-type") || "").toLowerCase();
+	const buf = new Uint8Array(await res.arrayBuffer());
+	if (ct.includes("text/html") || buf.length < 64 || buf[0] === 0x3c /* '<' */) {
+		throw new Error(`Cloudflare/HTML вместо файла (${url})`);
+	}
+	return buf;
+}
+
+/**
+ * Pre-seed tesseract.js IndexedDB cache so the worker never requests
+ * eng.traineddata.gz (blocked by Cloudflare on some hosts).
+ * @param {string} langDataUrl
+ */
+async function seedEngLanguageCache(langDataUrl) {
+	try {
+		const existing = await idbGet(IDB_LANG_KEY);
+		if (existing && (existing.byteLength || existing.length) > 100_000) {
+			return "cache-hit";
+		}
+	} catch {
+		/* continue to fetch */
+	}
+
+	const candidates = [langDataUrl, CDN_LANG].filter(Boolean);
+	let lastErr = null;
+	for (const url of candidates) {
+		try {
+			const data = await fetchOcrBinary(url);
+			// Gzipped or raw traineddata both OK — worker gunzips when magic matches.
+			await idbSet(IDB_LANG_KEY, data);
+			return url === CDN_LANG ? "cdn-seeded" : "local-seeded";
+		} catch (e) {
+			lastErr = e;
+		}
+	}
+	throw lastErr || new Error("Не удалось загрузить eng.traineddata");
+}
+
+/**
+ * HEAD/GET sanity check for worker + core (must be reachable as JS).
+ * @param {{ workerPath: string, corePath: string }} paths
+ */
+async function assertCoreAssets(paths) {
+	for (const [label, url] of [
+		["worker", paths.workerPath],
+		["core", paths.corePath],
+	]) {
+		const res = await fetch(url, { method: "GET", credentials: "same-origin", cache: "force-cache" });
+		if (!res.ok) throw new Error(`${label} ${url} → HTTP ${res.status}`);
+		const ct = (res.headers.get("content-type") || "").toLowerCase();
+		if (ct.includes("text/html")) {
+			throw new Error(`${label} заблокирован (HTML challenge): ${url}`);
+		}
+	}
+}
+
 export async function prepareOcrEngine() {
 	if (workerPromise) return workerPromise;
+	setOcrUi("loading", "OCR загружается…");
 	workerPromise = (async () => {
 		const Tesseract = await import("tesseract.js");
 		/** @type {Record<string, unknown>} */
-		const options = { logger: () => {} };
+		const options = { logger: () => {}, cacheMethod: "readOnly" };
 		// Node ships its own worker + core; only pin browser CDN/local paths.
 		if (!isNodeRuntime()) {
 			const paths = assetPaths();
 			options.workerPath = paths.workerPath;
 			options.langPath = paths.langPath;
 			options.corePath = paths.corePath;
+			await assertCoreAssets(paths);
+			const seed = await seedEngLanguageCache(paths.langDataUrl);
+			if (seed === "cdn-seeded") {
+				console.info("[ocr] tessdata seeded from CDN fallback (local CF-blocked)");
+			}
 		} else {
-			// Correct lang pack for LSTM OEM (same as browser CDN fallback).
 			options.langPath =
 				"https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int";
+			delete options.cacheMethod;
 		}
 		const worker = await Tesseract.createWorker("eng", 1, options);
 		await worker.setParameters({
 			tessedit_pageseg_mode: "6",
 			preserve_interword_spaces: "1",
 		});
-		lastOcrError = null;
+		setOcrUi("ready", "OCR готов");
 		return worker;
 	})().catch((e) => {
 		workerPromise = null;
-		lastOcrError = e?.message || String(e);
+		const msg = e?.message || String(e);
+		lastOcrError = msg;
+		setOcrUi("error", ocrStatusLabel("error", msg), msg);
 		throw e;
 	});
 	return workerPromise;
@@ -247,6 +374,7 @@ export async function terminateOcr() {
 		/* ignore */
 	} finally {
 		workerPromise = null;
+		ocrUiStatus = "idle";
 	}
 }
 
@@ -255,8 +383,9 @@ export function getOcrCacheHints() {
 		engine: "tesseract.js v5",
 		language: "eng",
 		approxSize: "WASM core ~3–5 MB + eng.traineddata ~2–4 MB gzipped differently by host",
-		offline: "Vendor with npm run vendor:ocr; assets under public/ocr/",
+		offline: "Vendor with npm run vendor:ocr; assets under public/ocr/ (incl. *.gz.js for CF)",
 		paths: isNodeRuntime() ? { source: "node-default" } : assetPaths(),
 		lastError: lastOcrError,
+		uiStatus: ocrUiStatus,
 	};
 }
