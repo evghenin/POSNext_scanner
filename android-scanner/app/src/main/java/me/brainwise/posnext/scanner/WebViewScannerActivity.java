@@ -4,13 +4,16 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.ViewGroup;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -28,22 +31,28 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 /**
  * Fullscreen WebView shell that loads the POSNext /pos-scanner PWA.
- * Used by the {@code demo} flavor for sideload without Digital Asset Links,
- * and as an optional fallback for the {@code twa} flavor.
- * Camera stays in-process via getUserMedia — no ZXing Intent / external apps.
- *
- * <p>Server URL / path can be changed in-app (SharedPreferences + JS bridge)
- * so admins do not rebuild the APK for every site.
+ * Probes the remote scanner URL before navigation and never leaves the user
+ * on Frappe's raw 404 HTML ("Здесь ничего нет").
  */
 public class WebViewScannerActivity extends AppCompatActivity implements ShellBridge.Host {
 	private static final String PREFS = "posnext_scanner_shell";
 	private static final String KEY_SERVER_URL = "server_url";
 	private static final String KEY_SCANNER_PATH = "scanner_path";
 	private static final String BOOTSTRAP_URL = "file:///android_asset/bootstrap/index.html";
+	private static final String ERROR_URL = "file:///android_asset/error/index.html";
+	private static final String LOADING_URL = "file:///android_asset/loading/index.html";
 
 	private WebView webView;
+	private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
+	private volatile boolean suppressNextHttpError = false;
+
 	@Nullable private PermissionRequest pendingWebPermission;
 	private final ActivityResultLauncher<String> cameraPermissionLauncher =
 			registerForActivityResult(
@@ -106,6 +115,56 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 						Uri uri = request.getUrl();
 						return !isAllowedUrl(uri);
 					}
+
+					@Override
+					public void onReceivedHttpError(
+							WebView view, WebResourceRequest request, WebResourceResponse errorResponse) {
+						if (!request.isForMainFrame() || suppressNextHttpError) {
+							return;
+						}
+						int code = errorResponse != null ? errorResponse.getStatusCode() : 0;
+						String url = request.getUrl() != null ? request.getUrl().toString() : "";
+						if (isLocalAsset(url)) {
+							return;
+						}
+						String kind = code == 404 || code == 410 ? "not_found" : "server_error";
+						if (code >= 500) {
+							kind = "server_error";
+						}
+						// Never leave Frappe 404 HTML on screen
+						showConnectionError(kind, url, code);
+					}
+
+					@Override
+					public void onReceivedError(
+							WebView view, WebResourceRequest request, WebResourceError error) {
+						if (!request.isForMainFrame()) {
+							return;
+						}
+						String url = request.getUrl() != null ? request.getUrl().toString() : "";
+						if (isLocalAsset(url)) {
+							return;
+						}
+						String kind = "unknown";
+						if (error != null) {
+							int code = error.getErrorCode();
+							if (code == ERROR_HOST_LOOKUP) {
+								kind = "dns";
+							} else if (code == ERROR_TIMEOUT) {
+								kind = "timeout";
+							} else if (code == ERROR_FAILED_SSL_HANDSHAKE || code == ERROR_UNSUPPORTED_SCHEME) {
+								kind = "tls";
+							} else if (code == ERROR_CONNECT || code == ERROR_IO) {
+								kind = "unknown";
+							}
+						}
+						showConnectionError(kind, url, null);
+					}
+
+					@Override
+					public void onPageStarted(WebView view, String url, Bitmap favicon) {
+						super.onPageStarted(view, url, favicon);
+					}
 				});
 
 		webView.setWebChromeClient(
@@ -131,7 +190,28 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 							}
 						});
 
-		webView.loadUrl(resolveStartUrl());
+		startInitialNavigation();
+	}
+
+	private void startInitialNavigation() {
+		Uri data = getIntent() != null ? getIntent().getData() : null;
+		if (data != null && isAllowedUrl(data) && !"file".equalsIgnoreCase(data.getScheme())) {
+			probeAndOpen(normalizeOrigin(data.toString()), getScannerPath());
+			return;
+		}
+
+		String storedOrigin = prefs().getString(KEY_SERVER_URL, "");
+		if (storedOrigin != null && !storedOrigin.isEmpty()) {
+			probeAndOpen(storedOrigin, getScannerPath());
+			return;
+		}
+
+		String baked = BuildConfig.SCANNER_ORIGIN;
+		if (baked.contains("example.com") || baked.isEmpty()) {
+			loadLocal(BOOTSTRAP_URL);
+			return;
+		}
+		probeAndOpen(baked, getScannerPath());
 	}
 
 	private SharedPreferences prefs() {
@@ -168,35 +248,69 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		String origin = normalizeOrigin(serverUrl);
 		String path = normalizePath(scannerPath);
 		if (origin.isEmpty()) {
+			showConnectionError("invalid_url", serverUrl, null);
 			return;
 		}
 		prefs().edit().putString(KEY_SERVER_URL, origin).putString(KEY_SCANNER_PATH, path).apply();
-		final String target = origin + path;
-		runOnUiThread(
+		probeAndOpen(origin, path);
+	}
+
+	@Override
+	public void retryLastServer() {
+		String origin = getServerUrl();
+		if (origin.isEmpty() || origin.contains("example.com")) {
+			loadLocal(BOOTSTRAP_URL);
+			return;
+		}
+		probeAndOpen(origin, getScannerPath());
+	}
+
+	private void probeAndOpen(@NonNull String origin, @NonNull String path) {
+		loadLocal(LOADING_URL);
+		probeExecutor.execute(
 				() -> {
-					if (webView != null) {
-						webView.loadUrl(target);
-					}
+					ScannerProbe.Result result = ScannerProbe.probe(origin, path);
+					runOnUiThread(
+							() -> {
+								if (result.ok) {
+									suppressNextHttpError = false;
+									if (webView != null) {
+										webView.loadUrl(result.url);
+									}
+								} else {
+									showConnectionError(result.kind, result.url, result.status);
+								}
+							});
 				});
 	}
 
-	private String resolveStartUrl() {
-		Uri data = getIntent() != null ? getIntent().getData() : null;
-		if (data != null && isAllowedUrl(data)) {
-			return data.toString();
+	private void showConnectionError(
+			@NonNull String kind, @Nullable String url, @Nullable Integer status) {
+		suppressNextHttpError = true;
+		String encodedUrl = "";
+		try {
+			encodedUrl = URLEncoder.encode(url == null ? "" : url, "UTF-8");
+		} catch (UnsupportedEncodingException ignored) {
+			encodedUrl = "";
 		}
+		String target =
+				ERROR_URL
+						+ "?kind="
+						+ Uri.encode(kind)
+						+ "&url="
+						+ encodedUrl
+						+ (status != null ? "&status=" + status : "");
+		loadLocal(target);
+	}
 
-		String storedOrigin = prefs().getString(KEY_SERVER_URL, "");
-		if (storedOrigin != null && !storedOrigin.isEmpty()) {
-			return storedOrigin + getScannerPath();
+	private void loadLocal(@NonNull String url) {
+		if (webView != null) {
+			webView.loadUrl(url);
 		}
+	}
 
-		// Build-time placeholder or missing site → local bootstrap settings
-		String baked = BuildConfig.SCANNER_ORIGIN;
-		if (baked.contains("example.com") || baked.isEmpty()) {
-			return BOOTSTRAP_URL;
-		}
-		return BuildConfig.SCANNER_URL;
+	private boolean isLocalAsset(@Nullable String url) {
+		return url != null && url.startsWith("file:///android_asset/");
 	}
 
 	private boolean isAllowedUrl(@Nullable Uri uri) {
@@ -206,12 +320,14 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		String scheme = uri.getScheme();
 		if ("file".equalsIgnoreCase(scheme)) {
 			String path = uri.getPath();
-			return path != null && path.contains("/android_asset/bootstrap");
+			return path != null
+					&& (path.contains("/android_asset/bootstrap")
+							|| path.contains("/android_asset/error")
+							|| path.contains("/android_asset/loading"));
 		}
 		if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)) {
 			return false;
 		}
-		// Demo shell: allow any http(s) host after admin configures settings (sideload trust model).
 		return uri.getHost() != null && !uri.getHost().isEmpty();
 	}
 
@@ -271,6 +387,7 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 
 	@Override
 	protected void onDestroy() {
+		probeExecutor.shutdownNow();
 		if (webView != null) {
 			webView.destroy();
 			webView = null;
