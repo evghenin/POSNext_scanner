@@ -11,18 +11,17 @@ This app is **separate from** the POSNext Frappe app. POSNext keeps backend pair
 | Path | Purpose |
 |------|---------|
 | `pos-scanner/` | Vue 3 + Vite PWA (camera, decode, settings, connection probe) |
-| `android-scanner/` | Android TWA + demo WebView APK wrapper |
+| `android-scanner/` | Demo WebView APK with **bundled** UI/OCR + optional TWA flavor |
 | `pos_next/www/` | Optional Frappe website page sources to host the PWA at `/pos-scanner` |
 | `releases/` | Versioned ready-to-sideload APK builds |
 | `docs/` | Hosting / hooks notes |
 
 ## Version
 
-Current release: **0.1.2**
+Current release: **0.2.0**
 
-- Demo APK: [`releases/posnext-scanner-demo-0.1.2.apk`](./releases/posnext-scanner-demo-0.1.2.apk)
-- Previous: [`releases/posnext-scanner-demo-0.1.1.apk`](./releases/posnext-scanner-demo-0.1.1.apk), [`0.1.0`](./releases/posnext-scanner-demo-0.1.0.apk)
-- GitHub Release: tag `vMAJOR.MINOR.PATCH` when published
+- Demo APK: [`releases/posnext-scanner-demo-0.2.0.apk`](./releases/posnext-scanner-demo-0.2.0.apk) — **offline UI + OCR inside APK**; server URL is API-only
+- Previous: [`0.1.3`](./releases/posnext-scanner-demo-0.1.3.apk), [`0.1.2`](./releases/posnext-scanner-demo-0.1.2.apk), …
 
 Bump the version in release filenames and git tags together (`vMAJOR.MINOR.PATCH`).
 
@@ -33,49 +32,45 @@ cd pos-scanner
 npm ci
 npm run dev          # local Vite; open the printed URL (HTTPS or localhost for camera)
 npm test             # vitest
-npm run build        # production assets → dist/
+npm run build        # production assets → pos_next/public (optional host)
+npm run build:android  # → android-scanner/app/src/main/assets/www
 ```
 
-Camera needs a secure context (HTTPS or localhost). Configure server URL / path in the in-app **Настройки** panel (or via the Android demo bootstrap screen).
+Camera needs a secure context (HTTPS or localhost). Configure **API** server URL in **Настройки**.
 
 ## Build Android APKs
 
-Requirements: JDK 17+, Android SDK (API 35).
+Requirements: JDK 17+, Android SDK (API 35), Node 20+.
 
 ```bash
 cd android-scanner
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 
-# Demo WebView shell (sideload; in-app server URL; camera permission bridge)
-./gradlew :app:assembleDemoDebug \
-  -Pscanner.host=https://YOUR.SITE \
-  -Pscanner.path=/pos-scanner
+# Builds Vue+OCR into assets, then the demo APK
+./scripts/build-debug-apk.sh https://YOUR.SITE
 
 # Output:
 # app/build/outputs/apk/demo/debug/app-demo-debug.apk
-
-# TWA (needs Digital Asset Links on the host)
-./gradlew :app:assembleTwaDebug -Pscanner.host=https://YOUR.SITE
 ```
-
-Helper: `./scripts/build-debug-apk.sh https://YOUR.SITE`
 
 Copy a release build into `releases/posnext-scanner-demo-X.Y.Z.apk` when shipping.
 
+The demo WebView loads `https://appassets.androidplatform.net/www/` via `WebViewAssetLoader` — **not** `{host}/pos-scanner`. `-Pscanner.host` only sets a default API origin.
+
 ## How it talks to POSNext
 
-1. **Hosted PWA route (optional)** — publish built assets and the www page so `https://your-site/pos-scanner` serves the scanner. Add routes in the site’s `hooks.py` (see `docs/POSNEXT_HOST_HOOKS.md`). Those routes are **not** shipped inside POSNext git anymore.
-2. **Demo APK** — bootstrap / `PosNextShell` bridge stores HTTPS origin + path, probes the scanner URL (native HTTP), then loads the remote PWA or a local RU error page. No external barcode Intent apps.
-3. **Pairing / cart APIs** — live in POSNext (`pos_next/api/mobile_scanner.py`, DocTypes `pos_mobile_*`). The phone pairs to a POS session and pushes scan operations through those whitelisted endpoints; this repo does not re-implement the backend.
+1. **Offline APK (preferred on phone)** — UI, tessdata, tesseract workers, zxing WASM ship inside the package. Settings store the ERPNext **API** origin; native probe uses `frappe.ping`.
+2. **Optional hosted PWA** — publish built assets + www page for browsers at `/pos-scanner` (see `docs/POSNEXT_HOST_HOOKS.md`). Not required for the APK.
+3. **Pairing / cart APIs** — live in POSNext (`pos_next/api/mobile_scanner.py`). This repo does not re-implement the backend.
 
-Typical flow: open scanner → configure ERPNext host → open camera → decode barcode/SKU → (later phases) search item → send to paired POS cart via POSNext APIs.
+Typical flow: open APK → (optional) set API URL → open camera → decode barcode/SKU → (later) send to paired POS cart via POSNext APIs.
 
 ## Install notes
 
 - **Sideload demo APK:** enable install from unknown sources; grant **Camera** when prompted.
-- Prefer **HTTPS** ERPNext hosts with a valid certificate.
-- If `/pos-scanner` is missing on the server, the app shows a local Russian error screen (not ERPNext’s raw 404).
-- TWA production builds need `assetlinks.json` for the release signing cert (template: `android-scanner/digital-asset-links.template.json`).
+- Prefer **HTTPS** ERPNext hosts with a valid certificate for API calls.
+- OCR must show **OCR готов** without downloading language packs from the ERP CDN/WAF.
+- TWA production builds need `assetlinks.json` if you still use a hosted PWA.
 
 ## License
 

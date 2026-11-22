@@ -1,11 +1,5 @@
-# Hotel Life shelf-tag OCR fixtures
+# Moved
 
-Still photos of printed price tags (no barcode). Used by `src/lib/ocr.shelf.spec.js`.
+OCR image fixtures now live in [`../tests/fixtures/ocr/`](../tests/fixtures/ocr/).
 
-| File | Expected |
-|------|----------|
-| `sku00776-a.png` | `SKU00776` |
-| `sku00776-b.png` | `SKU00776` |
-| `sku00668-prija.png` | `SKU00668` |
-
-Source copies also live in the Project store under `media/ocr-shelf-tags/`.
+Canonical test: `tests/ocr-fixtures.spec.js` (`npm test` / `npm run test:ocr-fixtures`).

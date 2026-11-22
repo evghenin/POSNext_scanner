@@ -1,10 +1,13 @@
 /**
  * Versioned scanner settings (localStorage). Schema bumps migrate in place.
  * Cart/pairing stay out of scope — workMode is persisted for later wiring.
+ *
+ * In the offline APK shell, serverUrl is the Frappe/POSNext API origin only —
+ * the scanner UI/OCR loads from bundled assets, not from /pos-scanner.
  */
 
 export const SETTINGS_KEY = "posnext.scanner.settings";
-export const SETTINGS_VERSION = 1;
+export const SETTINGS_VERSION = 2;
 
 /** @typedef {"immediate" | "accumulate"} WorkMode */
 /** @typedef {"ru" | "en" | "ro"} LanguageCode */
@@ -13,7 +16,7 @@ export const SETTINGS_VERSION = 1;
  * @typedef {object} ScannerSettings
  * @property {number} version
  * @property {string} serverUrl HTTPS origin, no trailing slash (e.g. https://pos.example.com)
- * @property {string} scannerPath path starting with / (default /pos-scanner)
+ * @property {string} scannerPath path starting with / (default /pos-scanner); used only for optional hosted PWA
  * @property {WorkMode} workMode
  * @property {boolean} soundEnabled
  * @property {boolean} vibrateEnabled
@@ -21,15 +24,33 @@ export const SETTINGS_VERSION = 1;
  * @property {LanguageCode} language
  */
 
+/** Origins that mean "UI is local", not an ERP API host. */
+export function isBundledUiOrigin(origin) {
+	const o = String(origin || "");
+	if (!o || o === "null") return true;
+	try {
+		const u = new URL(o.includes("://") ? o : `https://${o}`);
+		const host = (u.hostname || "").toLowerCase();
+		return (
+			host === "appassets.androidplatform.net" ||
+			host === "localhost" ||
+			u.protocol === "file:"
+		);
+	} catch {
+		return o.startsWith("file:");
+	}
+}
+
 /** @returns {ScannerSettings} */
 export function defaultSettings() {
-	const origin =
-		typeof window !== "undefined" && window.location?.origin
-			? window.location.origin
-			: "";
+	let origin = "";
+	if (typeof window !== "undefined" && window.location?.origin) {
+		const loc = window.location.origin;
+		if (!isBundledUiOrigin(loc)) origin = loc;
+	}
 	return {
 		version: SETTINGS_VERSION,
-		serverUrl: origin && origin !== "null" ? origin : "",
+		serverUrl: origin,
 		scannerPath: "/pos-scanner",
 		workMode: "immediate",
 		soundEnabled: true,
@@ -49,11 +70,14 @@ export function migrateSettings(raw) {
 	const o = /** @type {Record<string, unknown>} */ (raw);
 	const version = typeof o.version === "number" ? o.version : 0;
 
-	// v0 / unversioned → v1
+	const serverUrl = normalizeServerUrl(String(o.serverUrl ?? o.siteUrl ?? base.serverUrl));
+	const cleanedServer =
+		serverUrl && isBundledUiOrigin(serverUrl) ? "" : serverUrl || base.serverUrl;
+
 	if (version < 1) {
 		return {
 			...base,
-			serverUrl: normalizeServerUrl(String(o.serverUrl ?? o.siteUrl ?? base.serverUrl)),
+			serverUrl: cleanedServer,
 			scannerPath: normalizeScannerPath(String(o.scannerPath ?? base.scannerPath)),
 			workMode: o.workMode === "accumulate" ? "accumulate" : "immediate",
 			soundEnabled: o.soundEnabled !== false,
@@ -67,7 +91,7 @@ export function migrateSettings(raw) {
 	return {
 		...base,
 		...o,
-		serverUrl: normalizeServerUrl(String(o.serverUrl ?? base.serverUrl)),
+		serverUrl: cleanedServer,
 		scannerPath: normalizeScannerPath(String(o.scannerPath ?? base.scannerPath)),
 		workMode: o.workMode === "accumulate" ? "accumulate" : "immediate",
 		soundEnabled: o.soundEnabled !== false,
@@ -92,7 +116,6 @@ export function normalizeServerUrl(url) {
 	try {
 		const u = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`);
 		if (u.protocol !== "https:" && u.protocol !== "http:") return "";
-		// Prefer HTTPS for production; allow http only for local LAN debugging
 		return `${u.protocol}//${u.host}`;
 	} catch {
 		return "";
@@ -108,6 +131,7 @@ export function normalizeScannerPath(path) {
 }
 
 /**
+ * Optional hosted PWA URL (browser / legacy). Not used by the offline APK UI.
  * @param {Pick<ScannerSettings, "serverUrl" | "scannerPath">} s
  */
 export function buildScannerPageUrl(s) {
@@ -115,6 +139,14 @@ export function buildScannerPageUrl(s) {
 	const path = normalizeScannerPath(s.scannerPath);
 	if (!origin) return "";
 	return `${origin}${path}`;
+}
+
+/**
+ * Frappe API origin used for pairing / cart methods.
+ * @param {Pick<ScannerSettings, "serverUrl">} s
+ */
+export function buildApiOrigin(s) {
+	return normalizeServerUrl(s.serverUrl);
 }
 
 /**
@@ -127,6 +159,12 @@ export function validateSettingsPatch(patch) {
 		const normalized = normalizeServerUrl(String(patch.serverUrl));
 		if (!normalized) {
 			return { ok: false, error: "Укажите корректный URL сервера (https://…)" };
+		}
+		if (isBundledUiOrigin(normalized)) {
+			return {
+				ok: false,
+				error: "Укажите URL ERPNext/POSNext (API), не адрес встроенного UI.",
+			};
 		}
 		if (normalized.startsWith("http://") && !isLocalHttpAllowed(normalized)) {
 			return {

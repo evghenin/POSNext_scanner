@@ -9,7 +9,8 @@ import org.json.JSONObject;
 
 /**
  * JS bridge for the demo WebView shell. Lets the PWA / bootstrap change
- * server URL / path and retry connection without rebuilding the APK.
+ * API server URL and retry connection without rebuilding the APK.
+ * Offline builds keep the Vue UI in assets — server URL is API-only.
  */
 public final class ShellBridge {
 	public interface Host {
@@ -18,6 +19,8 @@ public final class ShellBridge {
 
 		@NonNull
 		String getScannerPath();
+
+		boolean isOfflineBundle();
 
 		void applyServerConfig(@NonNull String serverUrl, @NonNull String scannerPath);
 
@@ -36,6 +39,7 @@ public final class ShellBridge {
 		try {
 			o.put("serverUrl", host.getServerUrl());
 			o.put("scannerPath", host.getScannerPath());
+			o.put("offlineBundle", host.isOfflineBundle());
 		} catch (JSONException ignored) {
 			/* empty */
 		}

@@ -5,21 +5,32 @@ import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const outDir = path.resolve(__dirname, "../pos_next/public/pos_scanner");
+const androidOut = path.resolve(__dirname, "../android-scanner/app/src/main/assets/www");
+const frappeOut = path.resolve(__dirname, "../pos_next/public/pos_scanner");
 const wwwHtml = path.resolve(__dirname, "../pos_next/www/pos_scanner.html");
 
+const isAndroidBuild = process.env.POS_SCANNER_ANDROID === "1";
+const outDir = process.env.POS_SCANNER_OUT
+	? path.resolve(process.env.POS_SCANNER_OUT)
+	: isAndroidBuild
+		? androidOut
+		: frappeOut;
+
 /**
- * After build, emit a Frappe www shell that loads hashed (or stable) assets
- * from /assets/pos_next/pos_scanner/.
+ * After Frappe-hosted builds, emit a www shell that loads assets from
+ * /assets/pos_next/pos_scanner/. Skipped for Android APK asset bundles.
  */
 function emitFrappeWww() {
 	return {
 		name: "pos-scanner-frappe-www",
 		apply: "build",
 		async closeBundle() {
+			if (isAndroidBuild || process.env.POS_SCANNER_SKIP_FRAPPE_WWW === "1") {
+				console.log("\n✓ Android/offline build — skipped Frappe www emit");
+				return;
+			}
 			const indexPath = path.join(outDir, "index.html");
-			let html = await fs.readFile(indexPath, "utf8");
-			// Built index already has absolute /assets/... links when base is set.
+			const html = await fs.readFile(indexPath, "utf8");
 			await fs.mkdir(path.dirname(wwwHtml), { recursive: true });
 			await fs.writeFile(wwwHtml, html, "utf8");
 			console.log(`\n✓ Wrote Frappe www page: ${wwwHtml}`);
@@ -29,7 +40,7 @@ function emitFrappeWww() {
 
 export default defineConfig({
 	plugins: [vue(), emitFrappeWww()],
-	base: process.env.POS_SCANNER_BASE || "/",
+	base: process.env.POS_SCANNER_BASE || (isAndroidBuild ? "/www/" : "/"),
 	resolve: {
 		alias: {
 			"@": path.resolve(__dirname, "src"),
@@ -42,7 +53,7 @@ export default defineConfig({
 	build: {
 		outDir,
 		emptyOutDir: true,
-		sourcemap: true,
+		sourcemap: !isAndroidBuild,
 		assetsDir: "assets",
 		rollupOptions: {
 			output: {
@@ -58,7 +69,7 @@ export default defineConfig({
 	},
 	test: {
 		environment: "jsdom",
-		include: ["src/**/*.spec.js"],
+		include: ["src/**/*.spec.js", "tests/**/*.spec.js"],
 	},
 	optimizeDeps: {
 		exclude: ["zxing-wasm"],

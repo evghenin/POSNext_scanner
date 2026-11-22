@@ -20,6 +20,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
 import androidx.activity.OnBackPressedCallback;
@@ -32,6 +33,7 @@ import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
+import androidx.webkit.WebViewAssetLoader;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
@@ -40,11 +42,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Fullscreen WebView shell for /pos-scanner.
+ * Fullscreen WebView shell that loads the Vue scanner from APK assets
+ * via {@link WebViewAssetLoader} (secure https origin for camera/WASM/workers).
  *
- * <p>IMPORTANT: {@link android.webkit.JavascriptInterface} callbacks arrive on a
- * binder thread — all WebView calls are marshalled to the main looper. Calling
- * {@code loadUrl} off the UI thread was a silent no-op after «Открыть сканер».
+ * <p>Server URL in settings is for Frappe/POSNext <strong>API only</strong> —
+ * the UI, OCR tessdata, tesseract workers, and zxing WASM are bundled offline.
  */
 public class WebViewScannerActivity extends AppCompatActivity implements ShellBridge.Host {
 	private static final String TAG = "POSNextScanner";
@@ -52,12 +54,19 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 	private static final String KEY_SERVER_URL = "server_url";
 	private static final String KEY_SCANNER_PATH = "scanner_path";
 	private static final String KEY_CACHE_BUST = "asset_cache_bust";
+
+	/** Virtual HTTPS origin served from android_asset/www/ (same-origin for workers). */
+	private static final String ASSET_DOMAIN = "appassets.androidplatform.net";
+	private static final String LOCAL_SCANNER_URL =
+			"https://" + ASSET_DOMAIN + "/www/index.html";
+
 	private static final String BOOTSTRAP_URL = "file:///android_asset/bootstrap/index.html";
 	private static final String ERROR_URL = "file:///android_asset/error/index.html";
 	private static final String LOADING_URL = "file:///android_asset/loading/index.html";
 
 	private final Handler mainHandler = new Handler(Looper.getMainLooper());
 	private WebView webView;
+	private WebViewAssetLoader assetLoader;
 	private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
 	private final AtomicInteger probeGeneration = new AtomicInteger(0);
 	private volatile boolean suppressNextHttpError = false;
@@ -110,6 +119,13 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 					return insets;
 				});
 
+		assetLoader =
+				new WebViewAssetLoader.Builder()
+						.setDomain(ASSET_DOMAIN)
+						.setHttpAllowed(false)
+						.addPathHandler("/www/", new WebViewAssetLoader.AssetsPathHandler(this))
+						.build();
+
 		WebSettings settings = webView.getSettings();
 		settings.setJavaScriptEnabled(true);
 		settings.setDomStorageEnabled(true);
@@ -128,6 +144,20 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 
 		webView.setWebViewClient(
 				new WebViewClient() {
+					@Nullable
+					@Override
+					public WebResourceResponse shouldInterceptRequest(
+							WebView view, WebResourceRequest request) {
+						if (assetLoader != null && request != null && request.getUrl() != null) {
+							WebResourceResponse local =
+									assetLoader.shouldInterceptRequest(request.getUrl());
+							if (local != null) {
+								return local;
+							}
+						}
+						return super.shouldInterceptRequest(view, request);
+					}
+
 					@Override
 					public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
 						Uri uri = request.getUrl();
@@ -140,11 +170,11 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 						if (!request.isForMainFrame() || suppressNextHttpError) {
 							return;
 						}
-						int code = errorResponse != null ? errorResponse.getStatusCode() : 0;
 						String url = request.getUrl() != null ? request.getUrl().toString() : "";
-						if (isLocalAsset(url)) {
+						if (isLocalAsset(url) || isBundledScannerUrl(url)) {
 							return;
 						}
+						int code = errorResponse != null ? errorResponse.getStatusCode() : 0;
 						String kind = code == 404 || code == 410 ? "not_found" : "server_error";
 						if (code >= 500) {
 							kind = "server_error";
@@ -159,7 +189,7 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 							return;
 						}
 						String url = request.getUrl() != null ? request.getUrl().toString() : "";
-						if (isLocalAsset(url)) {
+						if (isLocalAsset(url) || isBundledScannerUrl(url)) {
 							return;
 						}
 						String kind = "unknown";
@@ -209,30 +239,48 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 							}
 						});
 
-		// Ask early so the first getUserMedia in the PWA is less likely to race
 		ensureAndroidCameraPermission();
 		startInitialNavigation();
 	}
 
 	private void startInitialNavigation() {
-		Uri data = getIntent() != null ? getIntent().getData() : null;
-		if (data != null && isAllowedUrl(data) && !"file".equalsIgnoreCase(data.getScheme())) {
-			probeAndOpen(normalizeOrigin(data.toString()), getScannerPath());
-			return;
-		}
-
-		String storedOrigin = prefs().getString(KEY_SERVER_URL, "");
-		if (storedOrigin != null && !storedOrigin.isEmpty()) {
-			probeAndOpen(storedOrigin, getScannerPath());
-			return;
-		}
-
-		String baked = BuildConfig.SCANNER_ORIGIN;
-		if (baked.contains("example.com") || baked.isEmpty()) {
+		// Always load bundled scanner UI. Deep links / remote /pos-scanner are not used for UI.
+		if (!hasBundledScanner()) {
 			loadLocal(BOOTSTRAP_URL);
+			Toast.makeText(
+							this,
+							"Сборка без www-ассетов. Запустите npm run build:android.",
+							Toast.LENGTH_LONG)
+					.show();
 			return;
 		}
-		probeAndOpen(baked, getScannerPath());
+		openBundledScanner();
+	}
+
+	private boolean hasBundledScanner() {
+		try {
+			String[] list = getAssets().list("www");
+			if (list == null) {
+				return false;
+			}
+			for (String name : list) {
+				if ("index.html".equals(name)) {
+					return true;
+				}
+			}
+		} catch (Exception e) {
+			Log.w(TAG, "assets/www missing", e);
+		}
+		return false;
+	}
+
+	private void openBundledScanner() {
+		assertMainThread();
+		suppressNextHttpError = false;
+		ensureAndroidCameraPermission();
+		if (webView != null) {
+			webView.loadUrl(withCacheBust(LOCAL_SCANNER_URL));
+		}
 	}
 
 	private SharedPreferences prefs() {
@@ -246,7 +294,11 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		if (stored != null && !stored.isEmpty()) {
 			return stored;
 		}
-		return BuildConfig.SCANNER_ORIGIN;
+		String baked = BuildConfig.SCANNER_ORIGIN;
+		if (baked.contains("example.com") || baked.isEmpty()) {
+			return "";
+		}
+		return baked;
 	}
 
 	@NonNull
@@ -256,23 +308,23 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		if (stored != null && !stored.isEmpty()) {
 			return stored;
 		}
-		try {
-			String path = Uri.parse(BuildConfig.SCANNER_URL).getPath();
-			return path == null || path.isEmpty() ? "/pos-scanner" : path;
-		} catch (Exception e) {
-			return "/pos-scanner";
-		}
+		return "/pos-scanner";
+	}
+
+	@Override
+	public boolean isOfflineBundle() {
+		return true;
 	}
 
 	@Override
 	public void applyServerConfig(@NonNull String serverUrl, @NonNull String scannerPath) {
-		// JavascriptInterface may call this off the UI thread
 		runOnMain(
 				() -> {
 					String origin = normalizeOrigin(serverUrl);
 					String path = normalizePath(scannerPath);
 					if (origin.isEmpty()) {
-						showConnectionError("invalid_url", serverUrl, null);
+						prefs().edit().remove(KEY_SERVER_URL).putString(KEY_SCANNER_PATH, path).apply();
+						openBundledScanner();
 						return;
 					}
 					prefs()
@@ -280,7 +332,8 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 							.putString(KEY_SERVER_URL, origin)
 							.putString(KEY_SCANNER_PATH, path)
 							.apply();
-					probeAndOpen(origin, path);
+					// Soft API probe — UI stays local either way
+					probeApiThenStayLocal(origin);
 				});
 	}
 
@@ -290,14 +343,14 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 				() -> {
 					String origin = getServerUrl();
 					if (origin.isEmpty() || origin.contains("example.com")) {
-						loadLocal(BOOTSTRAP_URL);
+						openBundledScanner();
 						return;
 					}
-					probeAndOpen(origin, getScannerPath());
+					probeApiThenStayLocal(origin);
 				});
 	}
 
-	private void probeAndOpen(@NonNull String origin, @NonNull String path) {
+	private void probeApiThenStayLocal(@NonNull String origin) {
 		assertMainThread();
 		final int gen = probeGeneration.incrementAndGet();
 		loadLocal(LOADING_URL);
@@ -305,25 +358,27 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 				() -> {
 					ScannerProbe.Result result;
 					try {
-						result = ScannerProbe.probe(origin, path);
+						result = ScannerProbe.probeApi(origin);
 					} catch (Throwable t) {
-						Log.e(TAG, "Probe crashed", t);
-						result = new ScannerProbe.Result(false, "unknown", null, origin + path);
+						Log.e(TAG, "API probe crashed", t);
+						result = new ScannerProbe.Result(false, "unknown", null, origin);
 					}
 					final ScannerProbe.Result finalResult = result;
 					runOnMain(
 							() -> {
 								if (gen != probeGeneration.get()) {
-									return; // superseded by a newer tap
+									return;
 								}
-								if (finalResult.ok) {
-									suppressNextHttpError = false;
-									ensureAndroidCameraPermission();
-									if (webView != null) {
-										webView.loadUrl(withCacheBust(finalResult.url));
-									}
-								} else {
-									showConnectionError(finalResult.kind, finalResult.url, finalResult.status);
+								// Always return to bundled UI — OCR must not depend on remote assets.
+								openBundledScanner();
+								if (!finalResult.ok) {
+									Toast.makeText(
+													this,
+													"API недоступен ("
+															+ finalResult.kind
+															+ "). OCR работает офлайн.",
+													Toast.LENGTH_LONG)
+											.show();
 								}
 							});
 				});
@@ -356,7 +411,7 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		}
 	}
 
-	/** Drop HTTP cache when APK version changes so remote PWA OCR assets are not stale. */
+	/** Drop HTTP cache when APK version changes so bundled assets refresh cleanly. */
 	private void maybeClearWebViewCacheForUpgrade() {
 		String current = BuildConfig.VERSION_NAME;
 		String previous = prefs().getString(KEY_CACHE_BUST, "");
@@ -406,6 +461,10 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		return url != null && url.startsWith("file:///android_asset/");
 	}
 
+	private boolean isBundledScannerUrl(@Nullable String url) {
+		return url != null && url.contains(ASSET_DOMAIN);
+	}
+
 	private boolean isAllowedUrl(@Nullable Uri uri) {
 		if (uri == null) {
 			return false;
@@ -416,12 +475,17 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 			return path != null
 					&& (path.contains("/android_asset/bootstrap")
 							|| path.contains("/android_asset/error")
-							|| path.contains("/android_asset/loading"));
+							|| path.contains("/android_asset/loading")
+							|| path.contains("/android_asset/www"));
 		}
-		if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)) {
-			return false;
+		if ("https".equalsIgnoreCase(scheme) && ASSET_DOMAIN.equalsIgnoreCase(uri.getHost())) {
+			return true;
 		}
-		return uri.getHost() != null && !uri.getHost().isEmpty();
+		// Allow navigating to the configured API host only for completeness; UI stays local.
+		if ("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme)) {
+			return uri.getHost() != null && !uri.getHost().isEmpty();
+		}
+		return false;
 	}
 
 	private static String normalizeOrigin(String raw) {
@@ -440,6 +504,9 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 				return "";
 			}
 			if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)) {
+				return "";
+			}
+			if (ASSET_DOMAIN.equalsIgnoreCase(host)) {
 				return "";
 			}
 			return scheme + "://" + host;

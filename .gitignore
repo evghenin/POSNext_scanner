@@ -65,5 +65,9 @@ venv/
 # Built scanner assets (npm run build)
 pos_next/public/
 
+# Android offline PWA bundle (npm run build:android)
+android-scanner/app/src/main/assets/www/**
+!android-scanner/app/src/main/assets/www/.gitkeep
+
 eng.traineddata
 !**/public/**/eng.traineddata*

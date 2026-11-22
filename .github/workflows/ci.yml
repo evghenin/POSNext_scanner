@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "cursor/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pos-scanner:
+    name: pos-scanner tests (incl. OCR fixtures)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pos-scanner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: pos-scanner/package-lock.json
+      - run: npm ci
+      - name: Unit + OCR fixture recognition
+        run: npm test
+      - name: OCR fixtures only (SKU/NSU/SRV images)
+        run: npm run test:ocr-fixtures

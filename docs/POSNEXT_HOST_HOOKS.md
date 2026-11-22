@@ -1,6 +1,10 @@
-# Host `/pos-scanner` on a POSNext / ERPNext site
+# Host `/pos-scanner` on a POSNext / ERPNext site (optional)
 
 These website routes are **not** in `evghenin/POSNext` git (scanner UI lives here: https://github.com/evghenin/POSNext_scanner).
+
+**Phone APK 0.2.0+** bundles the scanner UI/OCR offline and does **not** need this host.
+Keep `/pos-scanner` only if you want a browser/TWA entry point. Server minimum for the
+phone remains pairing/session + cart APIs.
 
 Add to the site app `hooks.py` when serving this PWA:
 
