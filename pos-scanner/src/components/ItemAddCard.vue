@@ -23,15 +23,28 @@ const showUomPicker = computed(() => uomDetails.value.length > 1);
 
 const qty = ref(1);
 const uom = ref("Nos");
+const imageOk = ref(true);
 
 watch(
 	() => props.result,
 	(r) => {
 		qty.value = Number(r?.qty) > 0 ? Number(r.qty) : 1;
 		uom.value = r?.uom || item.value?.uom || uomDetails.value[0]?.uom || "Nos";
+		imageOk.value = Boolean(item.value?.image);
 	},
 	{ immediate: true }
 );
+
+const showImage = computed(() => Boolean(item.value?.image) && imageOk.value);
+
+function onImageError() {
+	imageOk.value = false;
+}
+
+function selectQty(ev) {
+	const el = ev?.target;
+	if (el && typeof el.select === "function") el.select();
+}
 
 const priceLabel = computed(() => {
 	const rate = item.value?.rate;
@@ -56,12 +69,13 @@ function onAdd() {
 
 <template>
 	<div class="card" v-if="item">
-		<div class="hero" :class="{ 'hero--photo': Boolean(item.image) }">
+		<div class="hero" :class="{ 'hero--photo': showImage }">
 			<img
-				v-if="item.image"
+				v-if="showImage"
 				class="photo"
 				:src="item.image"
 				:alt="item.item_name || item.item_code"
+				@error="onImageError"
 			/>
 			<div>
 				<h2>{{ item.item_name || item.item_code }}</h2>
@@ -75,7 +89,15 @@ function onAdd() {
 
 		<label class="field">
 			<span>{{ t("qty") }}</span>
-			<input v-model.number="qty" type="number" min="0.001" step="any" inputmode="decimal" />
+			<input
+				v-model.number="qty"
+				class="qty-input"
+				type="number"
+				min="0.001"
+				step="any"
+				inputmode="decimal"
+				@focus="selectQty"
+			/>
 		</label>
 
 		<div v-if="showUomPicker" class="uoms">
@@ -168,13 +190,14 @@ h2 {
 	color: var(--muted);
 }
 
-.field input {
+.field .qty-input {
 	border: 1px solid var(--border);
-	border-radius: 10px;
-	padding: 0.65rem 0.75rem;
+	border-radius: 12px;
+	padding: 0.85rem 0.9rem;
 	background: var(--input-bg);
 	color: inherit;
-	font-size: 1.05rem;
+	font-size: 1.35rem;
+	font-weight: 650;
 }
 
 .field-label {
