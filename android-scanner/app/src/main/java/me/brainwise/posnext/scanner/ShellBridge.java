@@ -8,9 +8,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * JS bridge for the WebView shell. Lets the Vue UI change API server URL and
- * run a native reachability probe (no CORS). Offline builds keep the Vue UI
- * in assets — server URL is API-only.
+ * JS bridge for the WebView shell: server URL, API probe, and cookie-aware HTTP.
  */
 public final class ShellBridge {
 	public interface Host {
@@ -26,8 +24,15 @@ public final class ShellBridge {
 
 		void retryLastServer();
 
-		/** Native frappe.ping probe; result delivered via {@code window.__posNextProbeDone}. */
 		void probeApi(@NonNull String serverUrl, @NonNull String callbackId);
+
+		void httpRequest(
+				@NonNull String method,
+				@NonNull String url,
+				@NonNull String body,
+				@NonNull String contentType,
+				@NonNull String headersJson,
+				@NonNull String callbackId);
 	}
 
 	private final Host host;
@@ -65,6 +70,23 @@ public final class ShellBridge {
 	public void probeApi(String serverUrl, String callbackId) {
 		host.probeApi(
 				serverUrl == null ? "" : serverUrl.trim(),
+				callbackId == null ? "" : callbackId.trim());
+	}
+
+	@JavascriptInterface
+	public void httpRequest(
+			String method,
+			String url,
+			String body,
+			String contentType,
+			String headersJson,
+			String callbackId) {
+		host.httpRequest(
+				method == null ? "GET" : method.trim(),
+				url == null ? "" : url.trim(),
+				body == null ? "" : body,
+				contentType == null ? "" : contentType.trim(),
+				headersJson == null ? "" : headersJson.trim(),
 				callbackId == null ? "" : callbackId.trim());
 	}
 }

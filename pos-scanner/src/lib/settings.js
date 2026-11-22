@@ -31,6 +31,10 @@ export const DEFAULT_API_ORIGIN = "https://erp.hotel-life.md";
  * @property {boolean} torchDefault
  * @property {LanguageCode} language
  * @property {ThemeMode} theme
+ * @property {string} apiUser ERPNext login (for pairing APIs)
+ * @property {string} apiPassword
+ * @property {string} apiKey optional token auth
+ * @property {string} apiSecret
  */
 
 /** Origins that mean "UI is local", not an ERP API host. */
@@ -63,6 +67,10 @@ export function defaultSettings() {
 		torchDefault: false,
 		language: "en",
 		theme: "system",
+		apiUser: "",
+		apiPassword: "",
+		apiKey: "",
+		apiSecret: "",
 	};
 }
 
@@ -113,6 +121,10 @@ export function migrateSettings(raw) {
 		torchDefault: Boolean(o.torchDefault),
 		language: normalizeLanguage(o.language),
 		theme: normalizeTheme(o.theme),
+		apiUser: String(o.apiUser ?? base.apiUser ?? ""),
+		apiPassword: String(o.apiPassword ?? base.apiPassword ?? ""),
+		apiKey: String(o.apiKey ?? base.apiKey ?? ""),
+		apiSecret: String(o.apiSecret ?? base.apiSecret ?? ""),
 		configured,
 		version: SETTINGS_VERSION,
 	};
@@ -193,6 +205,10 @@ export function validateSettingsPatch(patch, opts = {}) {
 	}
 	if (patch.language != null) next.language = normalizeLanguage(patch.language);
 	if (patch.theme != null) next.theme = normalizeTheme(patch.theme);
+	if (patch.apiUser != null) next.apiUser = String(patch.apiUser);
+	if (patch.apiPassword != null) next.apiPassword = String(patch.apiPassword);
+	if (patch.apiKey != null) next.apiKey = String(patch.apiKey);
+	if (patch.apiSecret != null) next.apiSecret = String(patch.apiSecret);
 
 	next.configured = true;
 	return { ok: true, settings: next };

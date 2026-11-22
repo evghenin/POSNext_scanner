@@ -38,6 +38,8 @@ import androidx.webkit.WebViewAssetLoader;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -362,6 +364,52 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 				});
 	}
 
+	@Override
+	public void httpRequest(
+			@NonNull String method,
+			@NonNull String url,
+			@NonNull String body,
+			@NonNull String contentType,
+			@NonNull String headersJson,
+			@NonNull String callbackId) {
+		if (callbackId.isEmpty() || url.isEmpty()) {
+			return;
+		}
+		final String cb = callbackId;
+		probeExecutor.execute(
+				() -> {
+					JSONObject o = new JSONObject();
+					try {
+						NativeHttp.Response res =
+								NativeHttp.request(
+										method,
+										url,
+										body.isEmpty() ? null : body,
+										contentType.isEmpty() ? null : contentType,
+										headersJson.isEmpty() ? null : headersJson);
+						o.put("ok", res.status >= 200 && res.status < 400);
+						o.put("status", res.status);
+						o.put("body", res.body);
+						o.put("url", res.url);
+						if (res.csrfToken != null) {
+							o.put("csrfToken", res.csrfToken);
+						}
+					} catch (Throwable t) {
+						Log.e(TAG, "httpRequest failed", t);
+						try {
+							o.put("ok", false);
+							o.put("status", 0);
+							o.put("body", "");
+							o.put("error", String.valueOf(t.getMessage()));
+							o.put("url", url);
+						} catch (JSONException ignored) {
+							/* empty */
+						}
+					}
+					deliverJsCallback("__posNextHttpDone", cb, o.toString());
+				});
+	}
+
 	private void deliverProbeResult(@NonNull String callbackId, @NonNull ScannerProbe.Result result) {
 		JSONObject o = new JSONObject();
 		try {
@@ -376,20 +424,32 @@ public class WebViewScannerActivity extends AppCompatActivity implements ShellBr
 		} catch (JSONException ignored) {
 			/* empty */
 		}
-		final String json = o.toString();
-		final String idEsc = callbackId.replace("\\", "\\\\").replace("'", "\\'");
-		final String jsonEsc = json.replace("\\", "\\\\").replace("'", "\\'");
+		deliverJsCallback("__posNextProbeDone", callbackId, o.toString());
+	}
+
+	/** Deliver JSON to JS via base64 to avoid quote escaping issues. */
+	private void deliverJsCallback(
+			@NonNull String fnName, @NonNull String callbackId, @NonNull String json) {
+		final String idB64 =
+				Base64.getEncoder().encodeToString(callbackId.getBytes(StandardCharsets.UTF_8));
+		final String jsonB64 =
+				Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
 		runOnMain(
 				() -> {
 					if (webView == null) {
 						return;
 					}
 					webView.evaluateJavascript(
-							"window.__posNextProbeDone && window.__posNextProbeDone('"
-									+ idEsc
-									+ "','"
-									+ jsonEsc
-									+ "')",
+							"(function(){try{var id=atob('"
+									+ idB64
+									+ "');var raw=atob('"
+									+ jsonB64
+									+ "');var data=JSON.parse(raw);"
+									+ "window."
+									+ fnName
+									+ "&&window."
+									+ fnName
+									+ "(id,data);}catch(e){console.error(e);}})()",
 							null);
 				});
 	}

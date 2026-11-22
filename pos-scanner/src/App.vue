@@ -2,22 +2,16 @@
 import { computed, onMounted, ref, watch } from "vue";
 import ConnectionErrorPanel from "@/components/ConnectionErrorPanel.vue";
 import ConnectionStatus from "@/components/ConnectionStatus.vue";
+import PairingScreen from "@/components/PairingScreen.vue";
 import SettingsPanel from "@/components/SettingsPanel.vue";
 import { probeApiEndpoint } from "@/lib/connectionProbe.js";
 import { setLanguage, t } from "@/lib/i18n.js";
-import {
-	hasSavedSettings,
-	loadSettings,
-} from "@/lib/settings.js";
+import { checkActivePairing, loadPairingSession } from "@/lib/pairing.js";
+import { hasSavedSettings, loadSettings } from "@/lib/settings.js";
 import { applyTheme } from "@/lib/theme.js";
 
 /**
- * Slice 1 screens:
- * settings → (after save) probing → connected | error
- * launch with settings → probing → connected | error
- * Start work → pairing stub (slice 2 later)
- *
- * @typedef {'boot' | 'settings' | 'probing' | 'connected' | 'error' | 'pairing_stub'} GatePhase
+ * @typedef {'boot' | 'settings' | 'probing' | 'connected' | 'error' | 'checking_pair' | 'pair' | 'paired' | 'work_stub'} GatePhase
  */
 
 const settings = ref(loadSettings());
@@ -28,6 +22,8 @@ const phase = ref("boot");
 const justSaved = ref(false);
 const connectionError = ref(null);
 const probeGen = ref(0);
+const pairingSession = ref(loadPairingSession());
+const pairingCheckMsg = ref("");
 
 const statusPhase = computed(() => {
 	if (phase.value === "connected") return "connected";
@@ -40,11 +36,7 @@ function applyLocaleAndTheme(s) {
 	applyTheme(s.theme);
 }
 
-watch(
-	settings,
-	(s) => applyLocaleAndTheme(s),
-	{ deep: true, immediate: true }
-);
+watch(settings, (s) => applyLocaleAndTheme(s), { deep: true, immediate: true });
 
 onMounted(async () => {
 	if (!hasSavedSettings()) {
@@ -98,17 +90,15 @@ function onSettingsSaved(next) {
 	settings.value = next;
 	settingsBlocking.value = false;
 	showSettings.value = false;
+	if (phase.value === "pair" || phase.value === "paired" || phase.value === "work_stub") {
+		return;
+	}
 	runProbe({ fromSave: true });
 }
 
 function openSettings() {
 	settingsBlocking.value = !hasSavedSettings();
 	showSettings.value = true;
-	if (phase.value === "error" || phase.value === "connected" || phase.value === "pairing_stub") {
-		/* keep phase under the panel */
-	} else {
-		phase.value = "settings";
-	}
 }
 
 function closeSettings(open) {
@@ -123,12 +113,39 @@ function retryConnection() {
 	runProbe({ fromSave: false });
 }
 
-function startWork() {
-	phase.value = "pairing_stub";
+/** Connected → Start work: check pairing, else QR screen. */
+async function startWorkFromConnected() {
+	phase.value = "checking_pair";
+	pairingCheckMsg.value = t("checkingPairing");
+	try {
+		const result = await checkActivePairing();
+		if (result.paired) {
+			pairingSession.value = result.session;
+			phase.value = "paired";
+			return;
+		}
+		phase.value = "pair";
+	} catch {
+		phase.value = "pair";
+	}
 }
 
-function backFromStub() {
+function onPaired(session) {
+	pairingSession.value = session;
+	phase.value = "paired";
+}
+
+/** Paired → Start work → work stub (layout later). */
+function startWorkFromPaired() {
+	phase.value = "work_stub";
+}
+
+function backToConnected() {
 	phase.value = "connected";
+}
+
+function openPairAgain() {
+	phase.value = "pair";
 }
 </script>
 
@@ -139,7 +156,7 @@ function backFromStub() {
 				v-if="phase === 'probing' || phase === 'connected'"
 				:phase="statusPhase"
 				:server-url="settings.serverUrl"
-				@start="startWork"
+				@start="startWorkFromConnected"
 				@settings="openSettings"
 			/>
 
@@ -150,12 +167,47 @@ function backFromStub() {
 				@settings="openSettings"
 			/>
 
-			<section v-else-if="phase === 'pairing_stub'" class="gate stub">
+			<section v-else-if="phase === 'checking_pair'" class="gate">
 				<p class="brand">{{ t("appName") }}</p>
-				<h1>{{ t("pairingStubTitle") }}</h1>
-				<p class="desc">{{ t("pairingStubBody") }}</p>
+				<p class="desc">{{ pairingCheckMsg || t("checkingPairing") }}</p>
+			</section>
+
+			<PairingScreen
+				v-else-if="phase === 'pair'"
+				@paired="onPaired"
+				@settings="openSettings"
+				@back="backToConnected"
+			/>
+
+			<section v-else-if="phase === 'paired'" class="gate">
+				<p class="brand">{{ t("appName") }}</p>
+				<h1>{{ t("pairedTitle") }}</h1>
+				<p class="desc ok">{{ t("pairedBody") }}</p>
+				<p v-if="pairingSession?.posProfile" class="meta mono">
+					{{ pairingSession.posProfile }}
+					<template v-if="pairingSession.sessionInstanceId">
+						· {{ pairingSession.sessionInstanceId.slice(0, 8) }}…
+					</template>
+				</p>
 				<div class="actions">
-					<button type="button" class="primary" @click="backFromStub">
+					<button type="button" class="primary" @click="startWorkFromPaired">
+						{{ t("startWork") }}
+					</button>
+					<button type="button" class="secondary" @click="openPairAgain">
+						{{ t("pairTitle") }}
+					</button>
+					<button type="button" class="ghost" @click="openSettings">
+						{{ t("openSettings") }}
+					</button>
+				</div>
+			</section>
+
+			<section v-else-if="phase === 'work_stub'" class="gate">
+				<p class="brand">{{ t("appName") }}</p>
+				<h1>{{ t("workStubTitle") }}</h1>
+				<p class="desc">{{ t("workStubBody") }}</p>
+				<div class="actions">
+					<button type="button" class="primary" @click="backToConnected">
 						{{ t("backToConnected") }}
 					</button>
 					<button type="button" class="secondary" @click="openSettings">
@@ -221,6 +273,21 @@ h1 {
 	line-height: 1.45;
 }
 
+.desc.ok {
+	color: var(--ok);
+}
+
+.meta {
+	margin: 0;
+	color: var(--accent);
+	font-size: 0.8rem;
+	word-break: break-all;
+}
+
+.mono {
+	font-family: var(--mono);
+}
+
 .actions {
 	display: grid;
 	gap: 0.5rem;
@@ -243,5 +310,10 @@ button {
 	background: transparent;
 	color: var(--fg);
 	border: 1px solid var(--border);
+}
+
+.ghost {
+	background: transparent;
+	color: var(--muted);
 }
 </style>
