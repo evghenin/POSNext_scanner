@@ -7,10 +7,10 @@ plugins {
 val scannerHost: String =
 	(findProperty("scanner.host") as String?)?.trimEnd('/')
 		?: "https://example.com"
+// Optional hosted PWA path — used only by the TWA flavor. Demo offline APK ignores this.
 val scannerPath: String =
 	(findProperty("scanner.path") as String?)?.let { if (it.startsWith("/")) it else "/$it" }
-		?: "/pos-scanner"
-val scannerUrl = "$scannerHost$scannerPath"
+		?: ""
 val scannerOrigin =
 	try {
 		val uri = URI(scannerHost)
@@ -18,6 +18,9 @@ val scannerOrigin =
 	} catch (_: Exception) {
 		scannerHost
 	}
+// TWA DEFAULT_URL still needs a concrete page when a hosted PWA exists.
+val scannerUrl =
+	if (scannerPath.isEmpty()) scannerOrigin else "$scannerOrigin$scannerPath"
 
 android {
 	namespace = "me.brainwise.posnext.scanner"
@@ -27,8 +30,8 @@ android {
 		applicationId = "me.brainwise.posnext.scanner"
 		minSdk = 26
 		targetSdk = 35
-		versionCode = 5
-		versionName = "0.2.0"
+		versionCode = 6
+		versionName = "0.2.1"
 		buildConfigField("String", "SCANNER_URL", "\"$scannerUrl\"")
 		buildConfigField("String", "SCANNER_ORIGIN", "\"$scannerOrigin\"")
 		manifestPlaceholders["scannerUrl"] = scannerUrl

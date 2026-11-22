@@ -9,8 +9,8 @@ import org.json.JSONObject;
 
 /**
  * JS bridge for the demo WebView shell. Lets the PWA / bootstrap change
- * API server URL and retry connection without rebuilding the APK.
- * Offline builds keep the Vue UI in assets — server URL is API-only.
+ * API server URL without rebuilding the APK. Offline builds keep the Vue UI
+ * in assets — server URL is API-only (never a remote /pos-scanner load).
  */
 public final class ShellBridge {
 	public interface Host {
@@ -48,9 +48,10 @@ public final class ShellBridge {
 
 	@JavascriptInterface
 	public void applyServerConfig(String serverUrl, String scannerPath) {
+		// scannerPath ignored for offline bundle (API origin only).
 		host.applyServerConfig(
 				serverUrl == null ? "" : serverUrl.trim(),
-				scannerPath == null ? "/pos-scanner" : scannerPath.trim());
+				scannerPath == null ? "" : scannerPath.trim());
 	}
 
 	@JavascriptInterface

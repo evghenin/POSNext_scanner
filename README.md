@@ -18,10 +18,10 @@ This app is **separate from** the POSNext Frappe app. POSNext keeps backend pair
 
 ## Version
 
-Current release: **0.2.0**
+Current release: **0.2.1**
 
-- Demo APK: [`releases/posnext-scanner-demo-0.2.0.apk`](./releases/posnext-scanner-demo-0.2.0.apk) — **offline UI + OCR inside APK**; server URL is API-only
-- Previous: [`0.1.3`](./releases/posnext-scanner-demo-0.1.3.apk), [`0.1.2`](./releases/posnext-scanner-demo-0.1.2.apk), …
+- Demo APK: [`releases/posnext-scanner-demo-0.2.1.apk`](./releases/posnext-scanner-demo-0.2.1.apk) — **offline UI + OCR**; never waits on `/pos-scanner`
+- Previous: [`0.2.0`](./releases/posnext-scanner-demo-0.2.0.apk), [`0.1.3`](./releases/posnext-scanner-demo-0.1.3.apk), …
 
 Bump the version in release filenames and git tags together (`vMAJOR.MINOR.PATCH`).
 
@@ -59,11 +59,11 @@ The demo WebView loads `https://appassets.androidplatform.net/www/` via `WebView
 
 ## How it talks to POSNext
 
-1. **Offline APK (preferred on phone)** — UI, tessdata, tesseract workers, zxing WASM ship inside the package. Settings store the ERPNext **API** origin; native probe uses `frappe.ping`.
+1. **Offline APK (preferred on phone)** — UI, tessdata, tesseract workers, zxing WASM ship inside the package. Settings store the ERPNext **API** origin only. Camera/OCR open without probing `/pos-scanner` or blocking on the network.
 2. **Optional hosted PWA** — publish built assets + www page for browsers at `/pos-scanner` (see `docs/POSNEXT_HOST_HOOKS.md`). Not required for the APK.
 3. **Pairing / cart APIs** — live in POSNext (`pos_next/api/mobile_scanner.py`). This repo does not re-implement the backend.
 
-Typical flow: open APK → (optional) set API URL → open camera → decode barcode/SKU → (later) send to paired POS cart via POSNext APIs.
+Typical flow: open APK → open camera (OCR offline) → optionally set API URL for pairing/cart later.
 
 ## Install notes
 

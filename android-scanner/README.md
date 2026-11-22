@@ -17,7 +17,7 @@ Decoding stays **inside the page** (zxing-wasm + tesseract). Assets load via
 
 - Application id: `me.brainwise.posnext.scanner`
 - Demo debug id: `me.brainwise.posnext.scanner.demo.debug`
-- Version: see `app/build.gradle.kts` (`0.2.0+`)
+- Version: see `app/build.gradle.kts` (`0.2.1+`)
 
 ## Build debug APK
 
@@ -50,9 +50,9 @@ Under `app/src/main/assets/www/` (generated, not committed):
 
 ## Server URL
 
-SharedPreferences + `PosNextShell` store the ERPNext **API origin**. Saving it runs a
-native `frappe.ping` probe, then returns to the local UI. Camera/OCR work without a
-reachable server.
+SharedPreferences + `PosNextShell` store the ERPNext **API origin**. Saving it never
+navigates to `/pos-scanner`; the WebView stays on bundled `www/`. An optional background
+`frappe.ping` may toast if the API is down. Camera/OCR work without a reachable server.
 
 ## Camera
 
