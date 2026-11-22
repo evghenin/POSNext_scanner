@@ -1,6 +1,9 @@
 /**
  * Frappe API client: prefers native HttpURLConnection on APK (cookies + CSRF),
  * falls back to fetch in browser.
+ *
+ * No phone-side ERPNext user / password / API key. Session link comes from QR
+ * connect (`link_token`); methods that need it receive it as a form param.
  */
 
 import { buildApiOrigin, loadSettings } from "./settings.js";
@@ -23,7 +26,7 @@ function writeCsrf(token) {
 /**
  * @param {string} methodPath e.g. pos_next.api.mobile_scanner.redeem_pairing
  * @param {Record<string, unknown>} [params]
- * @param {{ serverUrl?: string, apiKey?: string, apiSecret?: string }} [opts]
+ * @param {{ serverUrl?: string }} [opts]
  */
 export async function callFrappeMethod(methodPath, params = {}, opts = {}) {
 	const settings = loadSettings();
@@ -31,17 +34,11 @@ export async function callFrappeMethod(methodPath, params = {}, opts = {}) {
 	if (!origin) throw new Error("missing_server");
 
 	const url = `${origin}/api/method/${methodPath}`;
-	const apiKey = opts.apiKey ?? settings.apiKey ?? "";
-	const apiSecret = opts.apiSecret ?? settings.apiSecret ?? "";
 	const body = encodeForm(params);
 	/** @type {Record<string, string>} */
 	const headers = {};
-	if (apiKey && apiSecret) {
-		headers.Authorization = `token ${apiKey}:${apiSecret}`;
-	} else {
-		const csrf = readCsrf();
-		if (csrf) headers["X-Frappe-CSRF-Token"] = csrf;
-	}
+	const csrf = readCsrf();
+	if (csrf) headers["X-Frappe-CSRF-Token"] = csrf;
 
 	const raw = await rawRequest({
 		method: "POST",
@@ -77,62 +74,6 @@ export async function callFrappeMethod(methodPath, params = {}, opts = {}) {
 }
 
 /**
- * Login with ERPNext usr/pwd (sets sid cookie in native CookieManager).
- * @param {{ serverUrl?: string, apiUser?: string, apiPassword?: string }} [opts]
- */
-/**
- * @param {{ serverUrl?: string, apiUser?: string, apiPassword?: string, apiKey?: string, apiSecret?: string }} [opts]
- */
-export async function ensureLoggedIn(opts = {}) {
-	const settings = loadSettings();
-	const apiKey = opts.apiKey ?? settings.apiKey ?? "";
-	const apiSecret = opts.apiSecret ?? settings.apiSecret ?? "";
-	if (apiKey && apiSecret) return { mode: "token" };
-
-	const usr = opts.apiUser ?? settings.apiUser ?? "";
-	const pwd = opts.apiPassword ?? settings.apiPassword ?? "";
-	if (!usr || !pwd) {
-		const err = new Error("login_required");
-		err.code = "login_required";
-		throw err;
-	}
-
-	const origin = buildApiOrigin({ serverUrl: opts.serverUrl ?? settings.serverUrl });
-	if (!origin) throw new Error("missing_server");
-
-	const raw = await rawRequest({
-		method: "POST",
-		url: `${origin}/api/method/login`,
-		body: encodeForm({ usr, pwd }),
-		contentType: "application/x-www-form-urlencoded",
-		headers: {},
-	});
-	if (raw.csrfToken) writeCsrf(raw.csrfToken);
-
-	if (!raw.ok) {
-		const err = new Error("login_failed");
-		err.code = "login_failed";
-		err.status = raw.status;
-		throw err;
-	}
-
-	// Refresh CSRF if cookie not yet set
-	if (!readCsrf()) {
-		try {
-			const boot = await rawRequest({
-				method: "GET",
-				url: `${origin}/api/method/frappe.auth.get_logged_user`,
-				headers: {},
-			});
-			if (boot.csrfToken) writeCsrf(boot.csrfToken);
-		} catch {
-			/* ignore */
-		}
-	}
-	return { mode: "session" };
-}
-
-/**
  * @param {{ method: string, url: string, body?: string, contentType?: string, headers?: Record<string, string> }} req
  */
 async function rawRequest(req) {
@@ -144,7 +85,7 @@ async function rawRequest(req) {
 	/** @type {RequestInit} */
 	const init = {
 		method: req.method || "GET",
-		credentials: "include",
+		credentials: "omit",
 		headers: {
 			Accept: "application/json",
 			...(req.headers || {}),

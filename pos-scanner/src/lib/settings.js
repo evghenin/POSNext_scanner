@@ -1,16 +1,13 @@
 /**
  * Versioned scanner settings (localStorage). Schema bumps migrate in place.
- * Slice 1: ERP URL, language, theme. Cart/pairing stay out of scope.
- *
- * First install: no SETTINGS_KEY → settings screen (blocking).
- * After save: configured=true; empty serverUrl is invalid.
+ * Settings UI: ERP URL, language, theme only — no phone credentials.
  */
 
 import { normalizeI18nLanguage } from "./i18n.js";
 import { normalizeTheme } from "./theme.js";
 
 export const SETTINGS_KEY = "posnext.scanner.settings";
-export const SETTINGS_VERSION = 4;
+export const SETTINGS_VERSION = 5;
 
 /** Production ERPNext / POSNext API origin (Hotel Life) — placeholder only until first save. */
 export const DEFAULT_API_ORIGIN = "https://erp.hotel-life.md";
@@ -31,10 +28,6 @@ export const DEFAULT_API_ORIGIN = "https://erp.hotel-life.md";
  * @property {boolean} torchDefault
  * @property {LanguageCode} language
  * @property {ThemeMode} theme
- * @property {string} apiUser ERPNext login (for pairing APIs)
- * @property {string} apiPassword
- * @property {string} apiKey optional token auth
- * @property {string} apiSecret
  */
 
 /** Origins that mean "UI is local", not an ERP API host. */
@@ -67,10 +60,6 @@ export function defaultSettings() {
 		torchDefault: false,
 		language: "en",
 		theme: "system",
-		apiUser: "",
-		apiPassword: "",
-		apiKey: "",
-		apiSecret: "",
 	};
 }
 
@@ -121,10 +110,6 @@ export function migrateSettings(raw) {
 		torchDefault: Boolean(o.torchDefault),
 		language: normalizeLanguage(o.language),
 		theme: normalizeTheme(o.theme),
-		apiUser: String(o.apiUser ?? base.apiUser ?? ""),
-		apiPassword: String(o.apiPassword ?? base.apiPassword ?? ""),
-		apiKey: String(o.apiKey ?? base.apiKey ?? ""),
-		apiSecret: String(o.apiSecret ?? base.apiSecret ?? ""),
 		configured,
 		version: SETTINGS_VERSION,
 	};
@@ -168,7 +153,7 @@ export function buildScannerPageUrl(s) {
 }
 
 /**
- * Frappe API origin used for pairing / cart methods.
+ * Frappe API origin used for connect / cart methods.
  * @param {Pick<ScannerSettings, "serverUrl">} s
  */
 export function buildApiOrigin(s) {
@@ -205,10 +190,6 @@ export function validateSettingsPatch(patch, opts = {}) {
 	}
 	if (patch.language != null) next.language = normalizeLanguage(patch.language);
 	if (patch.theme != null) next.theme = normalizeTheme(patch.theme);
-	if (patch.apiUser != null) next.apiUser = String(patch.apiUser);
-	if (patch.apiPassword != null) next.apiPassword = String(patch.apiPassword);
-	if (patch.apiKey != null) next.apiKey = String(patch.apiKey);
-	if (patch.apiSecret != null) next.apiSecret = String(patch.apiSecret);
 
 	next.configured = true;
 	return { ok: true, settings: next };

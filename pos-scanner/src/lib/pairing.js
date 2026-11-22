@@ -1,9 +1,9 @@
 /**
- * Mobile pairing session: redeem QR/PIN, persist link_token, status check.
- * APIs: pos_next.api.mobile_scanner.{redeem_pairing,get_session_status}
+ * Scanner↔POS link session: redeem QR, persist link_token, status check.
+ * No phone login — APIs: pos_next.api.mobile_scanner.{redeem_pairing,get_session_status}
  */
 
-import { callFrappeMethod, ensureLoggedIn } from "./apiClient.js";
+import { callFrappeMethod } from "./apiClient.js";
 
 export const PAIRING_KEY = "posnext.scanner.pairing";
 export const DEVICE_ID_KEY = "posnext.scanner.device_id";
@@ -123,7 +123,6 @@ export async function checkActivePairing() {
 		return { paired: false, session: null };
 	}
 	try {
-		await ensureLoggedIn();
 		const status = await callFrappeMethod("pos_next.api.mobile_scanner.get_session_status", {
 			link_token: session.linkToken,
 		});
@@ -143,7 +142,7 @@ export async function checkActivePairing() {
 		};
 	} catch (e) {
 		const msg = String(e?.message || e || "");
-		if (/expired|revoked|invalid|Authentication|login/i.test(msg)) {
+		if (/expired|revoked|invalid|Authentication|Permission|login/i.test(msg)) {
 			clearPairingSession();
 			return { paired: false, session: null, error: msg };
 		}
@@ -162,7 +161,6 @@ export async function redeemPairingFromQr(qrRaw) {
 		err.code = "invalid_qr";
 		throw err;
 	}
-	await ensureLoggedIn();
 	const deviceId = getOrCreateDeviceId();
 	const message = await callFrappeMethod("pos_next.api.mobile_scanner.redeem_pairing", {
 		device_id: deviceId,

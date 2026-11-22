@@ -5,9 +5,8 @@ import { t } from "@/lib/i18n.js";
 const props = defineProps({
 	/** @type {import('vue').PropType<'saving' | 'probing' | 'connected'>} */
 	phase: { type: String, required: true },
-	serverUrl: { type: String, default: "" },
 });
-defineEmits(["start", "settings"]);
+defineEmits(["connect", "settings"]);
 
 const title = computed(() => {
 	if (props.phase === "connected") return t("connected");
@@ -27,9 +26,10 @@ const statusLine = computed(() => {
 		<p class="brand">{{ t("appName") }}</p>
 		<h1>{{ title }}</h1>
 		<p v-if="statusLine" class="status" :data-phase="phase">{{ statusLine }}</p>
-		<p v-if="serverUrl" class="url mono">{{ serverUrl }}</p>
 		<div v-if="phase === 'connected'" class="actions">
-			<button type="button" class="primary" @click="$emit('start')">{{ t("startWork") }}</button>
+			<button type="button" class="primary" @click="$emit('connect')">
+				{{ t("connectScanner") }}
+			</button>
 			<button type="button" class="secondary" @click="$emit('settings')">
 				{{ t("openSettings") }}
 			</button>
@@ -66,17 +66,6 @@ h1 {
 
 .status[data-phase="connected"] {
 	color: var(--ok);
-}
-
-.url {
-	margin: 0;
-	color: var(--accent);
-	font-size: 0.8rem;
-	word-break: break-all;
-}
-
-.mono {
-	font-family: var(--mono);
 }
 
 .pulse {

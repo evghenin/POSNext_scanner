@@ -131,7 +131,7 @@ export function probeMessage(kind, url, status = null, mode = "scanner") {
 }
 
 /**
- * Probe Frappe API origin (pairing/cart). Used by offline APK + browser.
+ * Probe Frappe API origin (connect / cart). Used by offline APK + browser.
  * Prefers native shell probe when available (avoids CORS from appassets).
  * @param {{ serverUrl: string }} cfg
  * @param {{ fetchImpl?: typeof fetch, timeoutMs?: number, preferNative?: boolean }} [opts]

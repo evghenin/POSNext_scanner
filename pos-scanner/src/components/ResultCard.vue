@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, watch } from "vue";
+import { t } from "@/lib/i18n.js";
 
 const props = defineProps({
 	result: { type: Object, required: true },
@@ -62,11 +63,11 @@ function onConfirm() {
 					<h2>{{ item.item_name || item.item_code }}</h2>
 					<p class="meta">{{ item.item_code }}</p>
 					<p v-if="priceLabel != null" class="price">{{ priceLabel }}</p>
-					<p v-else class="meta">Цена появится после pairing</p>
+					<p v-else class="meta">{{ t("itemNoPrice") }}</p>
 				</div>
 			</div>
 			<p v-if="item.pending" class="warn">
-				Код распознан. Название и цена с кассы появятся после pairing.
+				{{ t("lookingUp") }}
 			</p>
 
 			<template v-if="!result.added">

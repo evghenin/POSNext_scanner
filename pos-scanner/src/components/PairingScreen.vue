@@ -92,13 +92,7 @@ async function redeem(raw) {
 			schedule();
 			return;
 		}
-		if (code === "login_required" || msg === "login_required") {
-			lastError.value = t("pairErrorLoginRequired");
-		} else if (code === "login_failed" || msg === "login_failed") {
-			lastError.value = t("pairErrorLogin");
-		} else {
-			lastError.value = msg || t("pairErrorGeneric");
-		}
+		lastError.value = msg || t("pairErrorGeneric");
 		status.value = "error";
 		busy.value = false;
 		camera.stop();

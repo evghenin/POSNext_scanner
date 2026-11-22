@@ -39,11 +39,6 @@ const labels = computed(() => {
 		themeSystem: t("themeSystem"),
 		themeDark: t("themeDark"),
 		themeLight: t("themeLight"),
-		apiUser: t("apiUser"),
-		apiPassword: t("apiPassword"),
-		apiKey: t("apiKey"),
-		apiSecret: t("apiSecret"),
-		apiAuthHint: t("apiAuthHint"),
 	};
 });
 
@@ -139,24 +134,6 @@ function onSave() {
 				</select>
 			</label>
 
-			<p class="hint">{{ labels.apiAuthHint }}</p>
-			<label class="field">
-				<span>{{ labels.apiUser }}</span>
-				<input v-model="draft.apiUser" type="text" autocomplete="username" />
-			</label>
-			<label class="field">
-				<span>{{ labels.apiPassword }}</span>
-				<input v-model="draft.apiPassword" type="password" autocomplete="current-password" />
-			</label>
-			<label class="field">
-				<span>{{ labels.apiKey }}</span>
-				<input v-model="draft.apiKey" type="text" autocomplete="off" />
-			</label>
-			<label class="field">
-				<span>{{ labels.apiSecret }}</span>
-				<input v-model="draft.apiSecret" type="password" autocomplete="off" />
-			</label>
-
 			<p v-if="error" class="err">{{ error }}</p>
 
 			<div class="actions">
@@ -230,8 +207,6 @@ function onSave() {
 }
 
 input[type="url"],
-input[type="text"],
-input[type="password"],
 select {
 	background: var(--input-bg);
 	border: 1px solid var(--border);

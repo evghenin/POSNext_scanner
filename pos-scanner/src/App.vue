@@ -114,7 +114,7 @@ function retryConnection() {
 	runProbe({ fromSave: false });
 }
 
-async function startWorkFromConnected() {
+async function connectScannerFromReachable() {
 	phase.value = "checking_pair";
 	pairingCheckMsg.value = t("checkingPairing");
 	try {
@@ -148,7 +148,7 @@ function openPairAgain() {
 }
 
 function onPairAgainFromWork() {
-	// Cart persists in localStorage; re-pair without clearing it.
+	// Cart persists in localStorage; reconnect without clearing it.
 	phase.value = "pair";
 }
 </script>
@@ -159,8 +159,7 @@ function onPairAgainFromWork() {
 			<ConnectionStatus
 				v-if="phase === 'probing' || phase === 'connected'"
 				:phase="statusPhase"
-				:server-url="settings.serverUrl"
-				@start="startWorkFromConnected"
+				@connect="connectScannerFromReachable"
 				@settings="openSettings"
 			/>
 

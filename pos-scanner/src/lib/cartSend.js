@@ -2,7 +2,7 @@
  * Push local cart to till via mobile_scanner enqueue_commands; clear only after ACK.
  */
 
-import { callFrappeMethod, ensureLoggedIn } from "./apiClient.js";
+import { callFrappeMethod } from "./apiClient.js";
 import { clearCartLines, ensurePendingSend, loadCart, saveCart } from "./cart.js";
 import { checkActivePairing, loadPairingSession } from "./pairing.js";
 
@@ -35,7 +35,6 @@ export async function sendCartToTill(opts = {}) {
 		return { kind: "ok", cart };
 	}
 
-	await ensureLoggedIn();
 	cart = ensurePendingSend(cart, String(cartGeneration));
 	const pending = cart.pendingSend;
 	if (!pending?.operations?.length) {

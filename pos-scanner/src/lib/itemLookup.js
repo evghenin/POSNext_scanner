@@ -1,4 +1,4 @@
-import { callFrappeMethod, ensureLoggedIn } from "./apiClient.js";
+import { callFrappeMethod } from "./apiClient.js";
 import { buildApiOrigin, loadSettings } from "./settings.js";
 
 /**
@@ -39,12 +39,11 @@ export async function lookupItem(code, opts = {}) {
 async function searchByBarcodeApi(origin, barcode) {
 	let message = null;
 	try {
-		await ensureLoggedIn();
 		message = await callFrappeMethod("pos_next.api.items.search_by_barcode", {
 			barcode,
 		});
 	} catch {
-		// Fall back to public GET (some sites allow guest read)
+		// Guest GET fallback (no phone credentials)
 		const url = new URL("/api/method/pos_next.api.items.search_by_barcode", origin);
 		url.searchParams.set("barcode", barcode);
 		const res = await fetch(url.toString(), {

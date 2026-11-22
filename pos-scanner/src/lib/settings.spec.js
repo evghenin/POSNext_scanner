@@ -18,7 +18,7 @@ describe("settings", () => {
 		expect(s.language).toBe("en");
 		expect(s.theme).toBe("system");
 		expect(s.configured).toBe(false);
-		expect(s.version).toBe(4);
+		expect(s.version).toBe(5);
 	});
 
 	it("normalizes server URL and path", () => {
@@ -34,7 +34,7 @@ describe("settings", () => {
 			workMode: "accumulate",
 			soundEnabled: false,
 		});
-		expect(s.version).toBe(4);
+		expect(s.version).toBe(5);
 		expect(s.serverUrl).toBe("https://a.example");
 		expect(s.workMode).toBe("accumulate");
 		expect(s.soundEnabled).toBe(false);
@@ -94,5 +94,23 @@ describe("settings", () => {
 
 	it("hasSavedSettings is false without localStorage blob", () => {
 		expect(hasSavedSettings()).toBe(false);
+	});
+
+	it("drops legacy phone credentials on migrate", () => {
+		const s = migrateSettings({
+			version: 4,
+			configured: true,
+			serverUrl: "https://erp.hotel-life.md",
+			apiUser: "cashier",
+			apiPassword: "secret",
+			apiKey: "key",
+			apiSecret: "sec",
+		});
+		expect(s.version).toBe(5);
+		expect(s.serverUrl).toBe("https://erp.hotel-life.md");
+		expect(s).not.toHaveProperty("apiUser");
+		expect(s).not.toHaveProperty("apiPassword");
+		expect(s).not.toHaveProperty("apiKey");
+		expect(s).not.toHaveProperty("apiSecret");
 	});
 });
