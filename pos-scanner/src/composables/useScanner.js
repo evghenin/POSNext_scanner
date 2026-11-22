@@ -14,8 +14,8 @@ import {
 } from "@/lib/ocr.js";
 
 /**
- * Recognition loop: barcode first; OCR only when no barcode in the reticle.
- * Multi OCR / multi barcode → user choice, never silent wrong pick.
+ * Continuous barcode scan; OCR only on explicit user tap (capture current frame).
+ * Multi match → picker; single hit → confirm sheet (qty / UOM).
  */
 export function useScanner(camera) {
 	const running = ref(false);
@@ -30,6 +30,7 @@ export function useScanner(camera) {
 	const ocrStatusText = ref(ocrStatusLabel("idle"));
 	const fpsHint = ref(0);
 	const lastDecodeMs = ref(0);
+	const ocrBusy = ref(false);
 
 	/** @type {import("vue").Ref<null | { kind: string, candidates: any[], source: string }>} */
 	const pendingChoice = ref(null);
@@ -42,10 +43,7 @@ export function useScanner(camera) {
 	let raf = 0;
 	let busy = false;
 	let lastFrameAt = 0;
-	let lastOcrAt = 0;
 	const BARCODE_INTERVAL_MS = 120;
-	/** Min gap between OCR attempts when barcode miss (barcode path never waits on OCR). */
-	const OCR_INTERVAL_MS = 450;
 
 	const unsubOcr = subscribeOcrStatus((payload) => {
 		ocrStatus.value = payload.status;
@@ -63,7 +61,6 @@ export function useScanner(camera) {
 		try {
 			await prepareBarcodeEngine();
 			engineInfo.value = await getBarcodeEngineInfo();
-			// OCR warm in background — always surface RU status (never silent).
 			prepareOcrEngine()
 				.then(() => {
 					ocrReady.value = true;
@@ -106,7 +103,6 @@ export function useScanner(camera) {
 	function resumeScanning() {
 		pendingChoice.value = null;
 		result.value = null;
-		// Keep OCR error visible until OCR recovers — do not clear OCR ошибки on dismiss.
 		if (lastError.value && !String(lastError.value).startsWith("OCR")) {
 			lastError.value = null;
 		}
@@ -119,9 +115,10 @@ export function useScanner(camera) {
 		raf = requestAnimationFrame(tick);
 	}
 
+	/** Continuous barcode only — OCR waits for {@link captureOcrNow}. */
 	async function tick(ts) {
 		if (!running.value) return;
-		if (paused.value || hasPending.value || busy) {
+		if (paused.value || hasPending.value || busy || ocrBusy.value) {
 			schedule();
 			return;
 		}
@@ -168,62 +165,90 @@ export function useScanner(camera) {
 					})),
 				};
 				feedback("recognized");
-			} else if (ts - lastOcrAt >= OCR_INTERVAL_MS) {
-				// No barcode → OCR only (never run OCR after a barcode hit).
-				lastOcrAt = ts;
-				if (!ocrReady.value) {
-					prepareOcrEngine()
-						.then(() => {
-							ocrReady.value = true;
-							if (lastError.value?.startsWith("OCR")) lastError.value = null;
-						})
-						.catch((e) => {
-							lastError.value = `OCR ошибка: ${e?.message || getLastOcrError() || e}`;
-						});
-				} else {
-					const ocrFrame =
-						typeof camera.captureOcrReticle === "function"
-							? camera.captureOcrReticle(cropCanvas)
-							: frame;
-					const ocr = await recognizeSkuInRegion((ocrFrame || frame).canvas);
-					lastDecodeMs.value = ocr.durationMs;
-					if (ocr.codes.length === 1) {
-						await emitRecognition({
-							value: ocr.codes[0],
-							format: "OCR SKU",
-							source: "ocr",
-							engine: "tesseract",
-							rawText: ocr.rawText,
-							durationMs: ocr.durationMs,
-						});
-					} else if (ocr.codes.length > 1) {
-						pauseForUi();
-						pendingChoice.value = {
-							kind: "ocr",
-							source: "ocr",
-							candidates: ocr.codes.map((code) => ({
-								value: code,
-								format: "OCR SKU",
-								engine: "tesseract",
-							})),
-							rawText: ocr.rawText,
-						};
-						feedback("recognized");
-					}
-				}
 			}
 		} catch (e) {
-			// zxing-wasm / empty first frames throw TypeError("Invalid input type") —
-			// never promote those to a sticky red OCR banner.
 			if (isTransientFrameError(e)) {
 				console.warn("[scanner] transient frame skip", e?.message || e);
+			} else {
+				const msg = e?.message || String(e);
+				lastError.value = msg.startsWith("OCR") ? msg : `Ошибка сканера: ${msg}`;
+			}
+		} finally {
+			busy = false;
+			schedule();
+		}
+	}
+
+	/**
+	 * User-triggered OCR: capture current reticle frame once.
+	 */
+	async function captureOcrNow() {
+		if (ocrBusy.value || paused.value || hasPending.value) return;
+		if (!camera.ready.value || !cropCanvas) {
+			lastError.value = "Камера не готова";
+			return;
+		}
+		if (!ocrReady.value) {
+			try {
+				await prepareOcrEngine();
+				ocrReady.value = true;
+			} catch (e) {
+				lastError.value = `OCR ошибка: ${e?.message || getLastOcrError() || e}`;
+				return;
+			}
+		}
+
+		ocrBusy.value = true;
+		status.value = "ocr";
+		const t0 = performance.now();
+		try {
+			const ocrFrame =
+				typeof camera.captureOcrReticle === "function"
+					? camera.captureOcrReticle(cropCanvas)
+					: camera.captureReticle(cropCanvas);
+			if (!ocrFrame?.canvas) {
+				lastError.value = "Не удалось снять кадр";
+				return;
+			}
+			const ocr = await recognizeSkuInRegion(ocrFrame.canvas);
+			lastDecodeMs.value = ocr.durationMs || Math.round(performance.now() - t0);
+			if (ocr.codes.length === 1) {
+				await emitRecognition({
+					value: ocr.codes[0],
+					format: "OCR SKU",
+					source: "ocr",
+					engine: "tesseract",
+					rawText: ocr.rawText,
+					durationMs: ocr.durationMs,
+				});
+			} else if (ocr.codes.length > 1) {
+				pauseForUi();
+				pendingChoice.value = {
+					kind: "ocr",
+					source: "ocr",
+					candidates: ocr.codes.map((code) => ({
+						value: code,
+						format: "OCR SKU",
+						engine: "tesseract",
+					})),
+					rawText: ocr.rawText,
+				};
+				feedback("recognized");
+			} else {
+				feedback("error");
+				lastError.value = "Код не распознан — наведите прицел и нажмите ещё раз";
+			}
+		} catch (e) {
+			if (isTransientFrameError(e)) {
+				console.warn("[scanner] OCR frame skip", e?.message || e);
+				lastError.value = "Кадр не готов — повторите";
 			} else {
 				const msg = e?.message || String(e);
 				lastError.value = msg.startsWith("OCR") ? msg : `OCR ошибка: ${msg}`;
 			}
 		} finally {
-			busy = false;
-			schedule();
+			ocrBusy.value = false;
+			if (!hasPending.value && running.value) status.value = "scanning";
 		}
 	}
 
@@ -234,9 +259,14 @@ export function useScanner(camera) {
 		lookingUp.value = true;
 		try {
 			const lookup = await lookupItem(payload.value);
+			const item = lookup?.item || null;
+			const uoms = item?.uoms?.length ? item.uoms : item?.uom ? [item.uom] : [];
+			const defaultUom = item?.uom || uoms[0] || "Nos";
 			result.value = {
 				...payload,
 				lookup,
+				qty: 1,
+				uom: defaultUom,
 				at: Date.now(),
 			};
 		} catch (e) {
@@ -271,15 +301,21 @@ export function useScanner(camera) {
 		});
 	}
 
-	function confirmAdd() {
+	/**
+	 * @param {{ qty?: number, uom?: string }} [opts]
+	 */
+	function confirmAdd(opts = {}) {
 		if (!result.value) return;
+		const qty = Number(opts.qty ?? result.value.qty ?? 1);
+		const uom = String(opts.uom || result.value.uom || "Nos");
 		feedback("added");
 		const code = result.value.value;
 		result.value = {
 			...result.value,
+			qty: Number.isFinite(qty) && qty > 0 ? qty : 1,
+			uom,
 			added: true,
 		};
-		// After intentional add, allow rescan of same code after short TTL
 		setTimeout(() => dedupe.forget(code), 600);
 	}
 
@@ -305,6 +341,7 @@ export function useScanner(camera) {
 		ocrStatusText,
 		fpsHint,
 		lastDecodeMs,
+		ocrBusy,
 		pendingChoice,
 		result,
 		lookingUp,
@@ -312,6 +349,7 @@ export function useScanner(camera) {
 		startLoop,
 		stopLoop,
 		resumeScanning,
+		captureOcrNow,
 		chooseCandidate,
 		submitManual,
 		confirmAdd,

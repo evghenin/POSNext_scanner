@@ -35,7 +35,8 @@ export async function lookupItem(code, opts = {}) {
 			item_code: upper,
 			item_name: upper,
 			barcode: q,
-			uom: null,
+			uom: "Nos",
+			uoms: ["Nos"],
 			rate: null,
 			image: null,
 			pending: true,
@@ -64,12 +65,85 @@ async function searchByBarcodeApi(origin, barcode) {
 	const item = message.item || message;
 	const itemCode = item.item_code || item.name;
 	if (!itemCode) return null;
+
+	const stockUom = item.stock_uom || item.uom || null;
+	const uoms = collectUoms(item, message, stockUom);
+	const rate = pickRate(item, message, stockUom);
+
 	return {
 		item_code: itemCode,
 		item_name: item.item_name || itemCode,
 		barcode: item.barcode || barcode,
-		uom: item.stock_uom || item.uom || null,
-		rate: item.rate ?? item.price_list_rate ?? null,
-		image: item.image || null,
+		uom: stockUom || uoms[0] || "Nos",
+		uoms,
+		rate,
+		image: resolveImageUrl(origin, item.image || item.image_url || null),
 	};
+}
+
+/**
+ * @param {object} item
+ * @param {object} message
+ * @param {string | null} stockUom
+ * @returns {string[]}
+ */
+function collectUoms(item, message, stockUom) {
+	const out = [];
+	const push = (u) => {
+		const v = String(u || "").trim();
+		if (v && !out.includes(v)) out.push(v);
+	};
+	push(stockUom);
+	const lists = [item.item_uoms, item.uoms, message.uom_prices, message.item_uoms];
+	for (const list of lists) {
+		if (!Array.isArray(list)) continue;
+		for (const row of list) {
+			if (typeof row === "string") push(row);
+			else if (row && typeof row === "object") {
+				push(row.uom || row.UOM || row.name);
+			}
+		}
+	}
+	if (message.uom_prices && typeof message.uom_prices === "object" && !Array.isArray(message.uom_prices)) {
+		for (const key of Object.keys(message.uom_prices)) push(key);
+	}
+	if (!out.length) push("Nos");
+	return out;
+}
+
+/**
+ * @param {object} item
+ * @param {object} message
+ * @param {string | null} stockUom
+ */
+function pickRate(item, message, stockUom) {
+	if (item.rate != null) return Number(item.rate);
+	if (item.price_list_rate != null) return Number(item.price_list_rate);
+	const prices = message.uom_prices;
+	if (prices && typeof prices === "object") {
+		if (stockUom && prices[stockUom] != null) {
+			const p = prices[stockUom];
+			return Number(typeof p === "object" ? p.rate ?? p.price_list_rate : p);
+		}
+		if (Array.isArray(prices) && prices[0]) {
+			const p = prices[0];
+			return Number(p.rate ?? p.price_list_rate ?? null);
+		}
+	}
+	return null;
+}
+
+/**
+ * @param {string} origin
+ * @param {string | null} image
+ */
+function resolveImageUrl(origin, image) {
+	if (!image) return null;
+	const s = String(image);
+	if (s.startsWith("http://") || s.startsWith("https://") || s.startsWith("data:")) return s;
+	try {
+		return new URL(s.startsWith("/") ? s : `/${s}`, origin).toString();
+	} catch {
+		return s;
+	}
 }

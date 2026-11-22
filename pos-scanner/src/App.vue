@@ -230,8 +230,8 @@ async function retryConnection() {
 			<div v-if="!started" class="gate">
 				<h1>Сканер POSNext</h1>
 				<p>
-					Штрихкоды (1D/2D) и OCR печатных кодов SKU / NSU / SRV. API:
-					ERPNext / POSNext на живом сервере.
+					Наведите камеру: штрихкод считывается сам. Печатный SKU / NSU / SRV —
+					кнопкой «Считать код». Затем подтвердите товар и количество.
 				</p>
 				<p v-if="settings.serverUrl" class="gate-meta mono">
 					{{ offlineUi ? `API: ${settings.serverUrl}` : `${settings.serverUrl}${settings.scannerPath}` }}
@@ -299,22 +299,27 @@ async function retryConnection() {
 				<button type="button" class="cta secondary" @click="openSettings">Настройки</button>
 			</div>
 
-			<div class="hud" v-if="started && camera.ready.value">
-				<span>{{ scanner.status.value }}</span>
+			<div class="hud" v-if="started && camera.ready.value && !sheetOpen">
 				<span>{{ modeLabel }}</span>
-				<span v-if="scanner.lastDecodeMs.value">{{ scanner.lastDecodeMs.value }} ms</span>
 				<span v-if="scanner.engineInfo.value">
-					{{ scanner.engineInfo.value.native ? "native+zxing" : "zxing" }}
+					{{ scanner.engineInfo.value.native ? "ШК: native+zxing" : "ШК: zxing" }}
 				</span>
 				<span
 					class="hud-ocr"
 					:data-ocr="scanner.ocrStatus.value"
 				>
-					{{ scanner.ocrStatusText.value }}
+					{{
+						scanner.ocrBusy.value
+							? "OCR…"
+							: scanner.ocrStatus.value === "ready"
+								? "OCR: нажмите кнопку"
+								: scanner.ocrStatusText.value
+					}}
 				</span>
+				<span v-if="scanner.lastDecodeMs.value">{{ scanner.lastDecodeMs.value }} ms</span>
 			</div>
 			<p
-				v-if="started && (scanner.ocrStatus.value === 'error' || scanner.lastError.value)"
+				v-if="started && !sheetOpen && (scanner.ocrStatus.value === 'error' || scanner.lastError.value)"
 				class="scan-err"
 				role="alert"
 			>
@@ -324,6 +329,26 @@ async function retryConnection() {
 						: scanner.lastError.value
 				}}
 			</p>
+
+			<button
+				v-if="started && camera.ready.value && !sheetOpen"
+				type="button"
+				class="ocr-shutter"
+				:disabled="
+					scanner.ocrBusy.value ||
+					scanner.lookingUp.value ||
+					scanner.ocrStatus.value === 'loading'
+				"
+				@click="scanner.captureOcrNow()"
+			>
+				{{
+					scanner.ocrBusy.value
+						? "Распознавание…"
+						: scanner.lookingUp.value
+							? "Поиск товара…"
+							: "Считать код (OCR)"
+				}}
+			</button>
 		</main>
 
 		<footer class="bar" v-if="started">
@@ -360,7 +385,7 @@ async function retryConnection() {
 			<ResultCard
 				v-else-if="scanner.result.value"
 				:result="scanner.result.value"
-				@add="scanner.confirmAdd"
+				@add="(opts) => scanner.confirmAdd(opts)"
 				@dismiss="scanner.dismiss"
 			/>
 		</div>
@@ -388,11 +413,11 @@ async function retryConnection() {
 			<div class="help__panel">
 				<h2>Сканер</h2>
 				<ul>
-					<li>1D/2D: <code>zxing-wasm</code> (+ native BarcodeDetector если доступен)</li>
-					<li>OCR: <code>tesseract.js</code>, область прицела, маски <code>SKU#####</code> / <code>NSU#####</code> / <code>SRV#####</code></li>
-					<li>Штрихкод имеет приоритет над OCR</li>
+					<li>Штрихкод считывается автоматически в прицеле</li>
+					<li>OCR (SKU / NSU / SRV) — только по кнопке «Считать код»</li>
+					<li>После нахождения товара — экран подтверждения (цена, кол-во, ед. изм.)</li>
 					<li>Несколько совпадений → ручной выбор</li>
-					<li>Товары ищутся на сервере API; pairing / корзина — следующий этап</li>
+					<li>API: живой сервер; pairing / корзина — следующий этап</li>
 				</ul>
 				<button type="button" class="cta" @click="showHelp = false">Закрыть</button>
 			</div>
@@ -569,7 +594,7 @@ async function retryConnection() {
 	position: absolute;
 	left: 0.75rem;
 	right: 0.75rem;
-	bottom: 0.75rem;
+	bottom: 5.5rem;
 	z-index: 2;
 	margin: 0;
 	padding: 0.55rem 0.75rem;
@@ -580,6 +605,27 @@ async function retryConnection() {
 	font-weight: 600;
 	line-height: 1.35;
 	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.ocr-shutter {
+	position: absolute;
+	left: 50%;
+	bottom: 1rem;
+	transform: translateX(-50%);
+	z-index: 3;
+	min-width: min(86vw, 320px);
+	border: 0;
+	border-radius: 999px;
+	padding: 1rem 1.35rem;
+	font-size: 1.05rem;
+	font-weight: 750;
+	background: var(--accent);
+	color: #04201b;
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+}
+
+.ocr-shutter:disabled {
+	opacity: 0.65;
 }
 
 .bar {
