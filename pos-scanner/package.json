@@ -14,7 +14,8 @@
 		"preview": "vite preview",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"test:ocr-fixtures": "vitest run src/lib/ocr.shelf.spec.js"
+		"test:ocr-fixtures": "vitest run tests/ocr-fixtures.spec.js",
+		"generate:ocr-synthetics": "node scripts/generate-ocr-synthetics.mjs"
 	},
 	"dependencies": {
 		"idb-keyval": "^6.3.0",

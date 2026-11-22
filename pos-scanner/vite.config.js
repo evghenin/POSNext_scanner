@@ -69,7 +69,7 @@ export default defineConfig({
 	},
 	test: {
 		environment: "jsdom",
-		include: ["src/**/*.spec.js"],
+		include: ["src/**/*.spec.js", "tests/**/*.spec.js"],
 	},
 	optimizeDeps: {
 		exclude: ["zxing-wasm"],

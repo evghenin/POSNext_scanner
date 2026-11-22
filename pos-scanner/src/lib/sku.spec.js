@@ -29,6 +29,8 @@ describe("extractSkuCodes", () => {
 		expect(extractSkuCodes("NSU00001")).toEqual(["NSU00001"]);
 		expect(extractSkuCodes("XNSU00001 Y NSU1234 Z NSU123456")).toEqual([]);
 		expect(extractSkuCodes("NSU 0 0 0 0 1")).toEqual(["NSU00001"]);
+		// OCR often inserts a spurious O between prefix and digits
+		expect(extractSkuCodes("NSUO00001")).toEqual(["NSU00001"]);
 	});
 
 	it("finds SRV##### case-insensitively", () => {
