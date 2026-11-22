@@ -1,15 +1,14 @@
 /**
  * Live item lookup for the connected scanner.
  *
- * Phone has no ERPNext login. Auth is the session `link_token` from QR connect.
- * Calls guest method: pos_next.api.mobile_scanner.lookup_item
+ * POST /api/method/pos_next.api.mobile_scanner.lookup_item
+ * Args: link_token, code — Guest, no user login.
  */
 
 import { callFrappeMethod } from "./apiClient.js";
 import { loadPairingSession } from "./pairing.js";
 import { buildApiOrigin, loadSettings } from "./settings.js";
 
-/** Server method the POSNext worker must expose (Guest + link_token). */
 export const LOOKUP_ITEM_METHOD = "pos_next.api.mobile_scanner.lookup_item";
 
 /**
@@ -22,6 +21,7 @@ export const LOOKUP_ITEM_METHOD = "pos_next.api.mobile_scanner.lookup_item";
  *   source: "api" | "local",
  *   error?: string,
  *   method?: string,
+ *   reason?: string,
  * }>}
  */
 export async function lookupItem(code, opts = {}) {
@@ -47,9 +47,7 @@ export async function lookupItem(code, opts = {}) {
 			link_token: linkToken,
 			code: q,
 		});
-		const item = normalizeLookupMessage(origin, q, message);
-		if (item) return { found: true, item, query: q, source: "api" };
-		return { found: false, item: null, query: q, source: "api" };
+		return mapLookupResponse(origin, q, message);
 	} catch (e) {
 		const msg = String(e?.message || e || "");
 		const status = Number(e?.status) || 0;
@@ -76,60 +74,80 @@ export async function lookupItem(code, opts = {}) {
 }
 
 /**
- * True when the Guest+link_token lookup endpoint is missing or not callable yet.
- * @param {string} message
- * @param {number} status
- * @param {unknown} payload
- */
-function isMissingLookupMethod(message, status, payload) {
-	const blob = `${message} ${payload?.exc_type || ""} ${JSON.stringify(payload || {})}`;
-	if (status === 404) return true;
-	if (/MethodNotFound|does not exist|AttributeError|Unknown method/i.test(blob)) return true;
-	// Method not allow_guest / still requires login
-	if (/PermissionError|not permitted|Login required|AuthenticationError|403/i.test(blob)) {
-		return true;
-	}
-	return false;
-}
-
-/**
+ * Map server payload → scanner item model.
+ * Exported for unit tests.
+ *
+ * Found: {found:true, code, item_code, item_name, image, stock_uom, price, currency,
+ *         uoms:[{uom, conversion_factor}], matched_by, barcode_uom}
+ * Missing: {found:false, code, reason:"not_found"}
+ * Not sellable: {found:false, reason:"not_for_sale"}
+ *
  * @param {string} origin
  * @param {string} query
  * @param {unknown} message
  */
-function normalizeLookupMessage(origin, query, message) {
-	if (!message || typeof message !== "object") return null;
-	if (message.found === false) return null;
+export function mapLookupResponse(origin, query, message) {
+	if (!message || typeof message !== "object") {
+		return { found: false, item: null, query, source: "api", error: "item_missing" };
+	}
 
-	const item = message.item || message;
-	const itemCode = item.item_code || item.name;
-	if (!itemCode) return null;
+	if (message.found === false) {
+		const reason = String(message.reason || "not_found");
+		return {
+			found: false,
+			item: null,
+			query,
+			source: "api",
+			error: reason === "not_for_sale" ? "not_for_sale" : "item_missing",
+			reason,
+		};
+	}
 
-	const stockUom = item.stock_uom || item.uom || null;
-	const uomDetails = collectUomDetails(item, message, stockUom);
+	const itemCode = message.item_code || message.item?.item_code;
+	if (!itemCode) {
+		return { found: false, item: null, query, source: "api", error: "item_missing" };
+	}
+
+	const stockUom = String(message.stock_uom || message.item?.stock_uom || "Nos");
+	const uomDetails = collectUomDetails(message, stockUom);
 	const uoms = uomDetails.map((u) => u.uom);
-	const rate = pickBaseRate(item, message, stockUom);
+	const priceRaw = message.price ?? message.item?.price ?? message.item?.rate;
+	const rate =
+		priceRaw == null || priceRaw === ""
+			? null
+			: Number.isFinite(Number(priceRaw))
+				? Number(priceRaw)
+				: null;
 
-	return {
+	const defaultUom =
+		String(message.barcode_uom || "").trim() ||
+		stockUom ||
+		uoms[0] ||
+		"Nos";
+
+	const item = {
 		item_code: itemCode,
-		item_name: item.item_name || itemCode,
-		barcode: item.barcode || query,
-		uom: stockUom || uoms[0] || "Nos",
-		stock_uom: stockUom || uoms[0] || "Nos",
+		item_name: message.item_name || message.item?.item_name || itemCode,
+		barcode: message.code || query,
+		uom: defaultUom,
+		stock_uom: stockUom,
 		uoms,
 		uom_details: uomDetails,
 		rate,
-		image: resolveImageUrl(origin, item.image || item.image_url || null),
+		currency: message.currency || null,
+		matched_by: message.matched_by || null,
+		image: resolveImageUrl(origin, message.image || message.item?.image || null),
 	};
+
+	return { found: true, item, query, source: "api" };
 }
 
 /**
- * @param {object} item
  * @param {object} message
- * @param {string | null} stockUom
+ * @param {string} stockUom
  * @returns {{ uom: string, conversion_factor: number }[]}
  */
-function collectUomDetails(item, message, stockUom) {
+function collectUomDetails(message, stockUom) {
 	/** @type {Map<string, number>} */
 	const map = new Map();
 	const push = (u, factor = 1) => {
@@ -138,53 +156,36 @@ function collectUomDetails(item, message, stockUom) {
 		const f = Number(factor);
 		map.set(v, Number.isFinite(f) && f > 0 ? f : map.get(v) || 1);
 	};
-	if (stockUom) push(stockUom, 1);
 
-	const lists = [item.item_uoms, item.uoms, message.uom_prices, message.item_uoms];
-	for (const list of lists) {
-		if (!Array.isArray(list)) continue;
+	push(stockUom, 1);
+
+	const list = message.uoms || message.item?.uoms;
+	if (Array.isArray(list)) {
 		for (const row of list) {
-			if (typeof row === "string") push(row, 1);
+			if (typeof row === "string") push(row, row === stockUom ? 1 : 1);
 			else if (row && typeof row === "object") {
 				push(row.uom || row.UOM || row.name, row.conversion_factor ?? row.factor ?? 1);
 			}
 		}
 	}
-	if (message.uom_prices && typeof message.uom_prices === "object" && !Array.isArray(message.uom_prices)) {
-		for (const [key, val] of Object.entries(message.uom_prices)) {
-			const factor =
-				typeof val === "object" ? val.conversion_factor ?? val.factor ?? 1 : 1;
-			push(key, factor);
-		}
-	}
+
 	if (!map.size) push("Nos", 1);
 	return [...map.entries()].map(([uom, conversion_factor]) => ({ uom, conversion_factor }));
 }
 
 /**
- * @param {object} item
- * @param {object} message
- * @param {string | null} stockUom
+ * @param {string} message
+ * @param {number} status
+ * @param {unknown} payload
  */
-function pickBaseRate(item, message, stockUom) {
-	if (item.rate != null && Number.isFinite(Number(item.rate))) return Number(item.rate);
-	if (item.price_list_rate != null && Number.isFinite(Number(item.price_list_rate))) {
-		return Number(item.price_list_rate);
+function isMissingLookupMethod(message, status, payload) {
+	const blob = `${message} ${payload?.exc_type || ""} ${JSON.stringify(payload || {})}`;
+	if (status === 404) return true;
+	if (/MethodNotFound|does not exist|AttributeError|Unknown method/i.test(blob)) return true;
+	if (/PermissionError|not permitted|Login required|AuthenticationError|403/i.test(blob)) {
+		return true;
 	}
-	const prices = message.uom_prices;
-	if (prices && typeof prices === "object") {
-		if (stockUom && prices[stockUom] != null) {
-			const p = prices[stockUom];
-			const n = Number(typeof p === "object" ? p.rate ?? p.price_list_rate : p);
-			if (Number.isFinite(n)) return n;
-		}
-		if (Array.isArray(prices) && prices[0]) {
-			const p = prices[0];
-			const n = Number(p.rate ?? p.price_list_rate ?? null);
-			if (Number.isFinite(n)) return n;
-		}
-	}
-	return null;
+	return false;
 }
 
 /**

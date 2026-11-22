@@ -268,6 +268,8 @@ export function useScanner(camera) {
 					lastError.value = "lookup_api_missing";
 				} else if (lookup?.error === "not_connected") {
 					lastError.value = "not_connected";
+				} else if (lookup?.error === "not_for_sale") {
+					lastError.value = "not_for_sale";
 				} else if (!found) {
 					lastError.value = "item_missing";
 				} else {

@@ -54,6 +54,7 @@ watch(
 		if (!err) return;
 		if (err === "item_missing") banner.value = t("itemMissing");
 		else if (err === "item_no_price") banner.value = t("itemNoPrice");
+		else if (err === "not_for_sale") banner.value = t("itemNotForSale");
 		else if (err === "lookup_api_missing") {
 			banner.value = t("lookupApiMissing", { method: LOOKUP_ITEM_METHOD });
 		} else if (err === "not_connected") banner.value = t("pairAgainKeepCart");

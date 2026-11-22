@@ -67,7 +67,7 @@ function onAdd() {
 				<h2>{{ item.item_name || item.item_code }}</h2>
 				<p class="meta mono">{{ item.item_code }}</p>
 				<p v-if="priceLabel != null" class="price">
-					{{ priceLabel }}
+					{{ priceLabel }}{{ item.currency ? ` ${item.currency}` : "" }}
 					<span class="per">/ 1 {{ item.stock_uom || item.uom || "Nos" }}</span>
 				</p>
 			</div>

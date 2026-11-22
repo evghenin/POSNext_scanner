@@ -88,6 +88,7 @@ const statusText = computed(() => {
 		return t("lookupApiMissing", { method: LOOKUP_ITEM_METHOD });
 	}
 	if (lookup.value?.error === "not_connected") return t("pairAgainKeepCart");
+	if (lookup.value?.error === "not_for_sale") return t("itemNotForSale");
 	if (lookup.value && !lookup.value.found) return t("itemMissing");
 	if (lookup.value?.item && (lookup.value.item.rate == null || !Number.isFinite(Number(lookup.value.item.rate)))) {
 		return t("itemNoPrice");
